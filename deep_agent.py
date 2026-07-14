@@ -27,7 +27,7 @@ from tools.search_code import search_code
 
 
 DEFAULT_BASE_URL = "http://127.0.0.1:8088/v1"
-DEFAULT_MODEL = "gemma-4-e2b-it-4bit"
+DEFAULT_MODEL = "models/gemma-4-12B-it-4bit"
 DEFAULT_SESSION_DB = ".deep-agent/sessions.sqlite3"
 
 
