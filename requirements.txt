@@ -1,0 +1,7 @@
+deepagents
+langchain-openai
+langchain-core
+langgraph-checkpoint-sqlite
+qdrant-client
+sentence-transformers
+httpx
