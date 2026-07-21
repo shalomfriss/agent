@@ -1,15 +1,22 @@
 import sqlite3
 import tempfile
 import unittest
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
 from typing import Annotated, TypedDict
 
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import (
+    AIMessage,
+    AIMessageChunk,
+    HumanMessage,
+    ToolMessage,
+)
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph import START, StateGraph
 from langgraph.graph.message import add_messages
 
-from deep_agent import SessionManager
+from deep_agent import SessionManager, StreamPrinter, ensure_memory_file
 
 
 class MessageState(TypedDict):
@@ -17,6 +24,50 @@ class MessageState(TypedDict):
 
 
 class SessionPersistenceTests(unittest.TestCase):
+    def test_memory_file_is_created_once_and_preserved(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            memory_file = ensure_memory_file(project)
+            memory_file.write_text("keep this", encoding="utf-8")
+
+            self.assertEqual(ensure_memory_file(project), memory_file)
+            self.assertEqual(memory_file.read_text(encoding="utf-8"), "keep this")
+
+    def test_stream_printer_renders_tokens_and_deduplicates_tools(self) -> None:
+        output = StringIO()
+        printer = StreamPrinter()
+        tool_call = {
+            "name": "execute",
+            "args": {"command": "pwd"},
+            "id": "call-1",
+            "type": "tool_call",
+        }
+        tool_result = ToolMessage(
+            content="/project",
+            name="execute",
+            tool_call_id="call-1",
+            id="result-1",
+        )
+
+        with redirect_stdout(output):
+            printer.token(AIMessageChunk(content="hel"))
+            printer.token(AIMessageChunk(content="lo"))
+            printer.update(
+                {
+                    "messages": [
+                        AIMessage(content="", tool_calls=[tool_call])
+                    ]
+                }
+            )
+            printer.update({"messages": [tool_result]})
+            printer.update({"messages": [tool_result]})
+            printer.finish()
+
+        rendered = output.getvalue()
+        self.assertIn("hello", rendered)
+        self.assertEqual(rendered.count("Tool call: execute"), 1)
+        self.assertEqual(rendered.count("Tool result [execute]"), 1)
+
     def test_active_session_survives_database_reopen(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory) / "sessions.sqlite3"
