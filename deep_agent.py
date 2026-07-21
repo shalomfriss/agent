@@ -27,8 +27,9 @@ from tools.search_code import search_code
 
 
 DEFAULT_BASE_URL = "http://127.0.0.1:8088/v1"
-DEFAULT_MODEL = "models/gemma-4-12B-it-4bit"
+DEFAULT_MODEL = "models/gemma-4-e2b-it-4bit"
 DEFAULT_SESSION_DB = ".deep-agent/sessions.sqlite3"
+SYSTEM_PROMPT_PATH = Path(__file__).with_name("system_prompt.txt")
 
 
 class SessionManager:
@@ -200,25 +201,7 @@ def create_agent(
         },
     )
 
-    system_prompt = """
-You are a local software-development agent running on the user's Mac.
-
-The user's project directory is mounted at /workspace/.
-
-Rules:
-1. Inspect relevant files before proposing or making changes.
-2. Use /workspace/ for all project file paths.
-3. Never invent file contents.
-4. Explain consequential changes clearly.
-5. Prefer small, focused edits over broad rewrites.
-6. Do not claim that you ran a tool unless the tool actually ran.
-7. Use the multiply tool for multiplication when explicitly requested.
-8. Before editing multiple files, create a concise plan using your planning tools.
-9. Do not access paths outside /workspace/.
-10. Ask before deleting important files or performing destructive changes.
-
-You may use subagents for complex tasks when delegation is helpful.
-""".strip()
+    system_prompt = SYSTEM_PROMPT_PATH.read_text(encoding="utf-8").strip()
 
     return create_deep_agent(
         model=model,
