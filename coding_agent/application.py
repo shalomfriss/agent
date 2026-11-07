@@ -38,11 +38,16 @@ class CodingAgentApplication:
             return EXIT_CONFIGURATION_ERROR
 
         self._print_configuration(workspace)
-        model = create_model(
-            base_url=self._config.base_url,
-            model_name=self._config.model_name,
-            temperature=self._config.temperature,
-        )
+        try:
+            model = create_model(
+                provider=self._config.provider,
+                base_url=self._config.base_url,
+                model_name=self._config.model_name,
+                temperature=self._config.temperature,
+            )
+        except ValueError as error:
+            print(error, file=sys.stderr)
+            return EXIT_CONFIGURATION_ERROR
 
         if self._config.run_diagnostics:
             diagnostic_result = run_model_diagnostics(model)
@@ -93,7 +98,9 @@ class CodingAgentApplication:
 
     def _print_configuration(self, workspace: Workspace) -> None:
         print(f"Project root: {workspace.project_root}")
-        print(f"API endpoint: {self._config.base_url}")
+        print(f"Provider: {self._config.provider}")
+        if self._config.base_url:
+            print(f"API endpoint: {self._config.base_url}")
         print(f"Model: {self._config.model_name}")
 
     @staticmethod

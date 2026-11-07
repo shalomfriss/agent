@@ -1,4 +1,4 @@
-Local coding agent powered by Deep Agents and an MLX OpenAI-compatible model.
+Coding agent powered by Deep Agents with a local MLX endpoint, OpenAI, or Anthropic.
 
 The agent can inspect and edit files, search the repository, execute shell
 commands, run tests, and search the web through the local SearXNG service.
@@ -29,8 +29,29 @@ From this repository, `./start_agent.sh -C /path/to/project --skip-tests`
 provides the same launcher and forwards all CLI options.
 
 The built-in file tools treat the selected directory as `/`, and every shell
-command starts there. The model endpoint defaults to
-`http://127.0.0.1:8088/v1`; override it with `--base-url` and `--model`.
+command starts there. The default provider is OpenAI with model `gpt-6-luna`.
+Use `--provider mlx` for the local model endpoint at
+`http://127.0.0.1:8088/v1`; override that endpoint with `--base-url`.
+
+## Choose a model provider
+
+OpenAI is selected by default. Pass `--model` to override its default model,
+or choose `--provider anthropic` with a model ID. Set the matching API key in
+your environment before starting the agent:
+
+```shell
+export OPENAI_API_KEY="your-openai-key"
+./deep_agent.py -C /path/to/project
+
+export ANTHROPIC_API_KEY="your-anthropic-key"
+./deep_agent.py --provider anthropic --model YOUR_ANTHROPIC_MODEL -C /path/to/project
+```
+
+Cloud providers do not use the local MLX endpoint. `--base-url` can point the
+OpenAI provider to a compatible endpoint; it is unavailable with Anthropic.
+`--temperature` is optional for cloud models and is passed only when specified.
+The startup chat and tool diagnostics call the chosen provider unless you pass
+`--skip-tests`.
 
 ## Code structure
 

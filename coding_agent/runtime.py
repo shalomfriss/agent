@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from enum import IntEnum
 from pathlib import Path
@@ -10,6 +11,8 @@ from typing import Any
 
 from deepagents import create_deep_agent
 from deepagents.backends import LocalShellBackend
+from langchain_anthropic import ChatAnthropic
+from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
@@ -31,25 +34,41 @@ class DiagnosticResult(IntEnum):
 
 
 def create_model(
-    base_url: str,
+    provider: str,
+    base_url: str | None,
     model_name: str,
-    temperature: float,
-) -> ChatOpenAI:
-    """Connect LangChain to the local OpenAI-compatible model server."""
+    temperature: float | None,
+) -> BaseChatModel:
+    """Construct the selected provider's LangChain chat model."""
 
-    return ChatOpenAI(
-        base_url=base_url,
-        api_key="not-required",
-        model=model_name,
-        temperature=temperature,
-        max_tokens=4096,
-        max_retries=1,
-        timeout=300,
-    )
+    options: dict[str, Any] = {
+        "model": model_name,
+        "max_tokens": 4096,
+        "max_retries": 1,
+        "timeout": 300,
+    }
+    if temperature is not None:
+        options["temperature"] = temperature
+
+    if provider == "mlx":
+        return ChatOpenAI(base_url=base_url, api_key="not-required", **options)
+    if provider == "openai":
+        if not os.environ.get("OPENAI_API_KEY"):
+            raise ValueError("OPENAI_API_KEY is required with --provider openai")
+        if base_url:
+            options["base_url"] = base_url
+        else:
+            options["use_responses_api"] = True
+        return ChatOpenAI(**options)
+    if provider == "anthropic":
+        if not os.environ.get("ANTHROPIC_API_KEY"):
+            raise ValueError("ANTHROPIC_API_KEY is required with --provider anthropic")
+        return ChatAnthropic(**options)
+    raise ValueError(f"Unknown model provider: {provider}")
 
 
 def create_coding_agent(
-    model: ChatOpenAI,
+    model: BaseChatModel,
     project_root: Path,
     checkpointer: SqliteSaver,
 ) -> Any:
@@ -78,7 +97,7 @@ def create_coding_agent(
     )
 
 
-def run_model_diagnostics(model: ChatOpenAI) -> DiagnosticResult:
+def run_model_diagnostics(model: BaseChatModel) -> DiagnosticResult:
     """Confirm chat and structured tool calls, returning a precise status."""
 
     if not _test_basic_chat(model):
@@ -105,7 +124,7 @@ def multiply(a: int, b: int) -> int:
     return a * b
 
 
-def _test_basic_chat(model: ChatOpenAI) -> bool:
+def _test_basic_chat(model: BaseChatModel) -> bool:
     print("Testing basic chat...")
     try:
         response = model.invoke(
@@ -119,7 +138,7 @@ def _test_basic_chat(model: ChatOpenAI) -> bool:
     return True
 
 
-def _test_structured_tool_calling(model: ChatOpenAI) -> bool:
+def _test_structured_tool_calling(model: BaseChatModel) -> bool:
     print("\nTesting structured tool calling...")
     tool_model = model.bind_tools([multiply])
 
