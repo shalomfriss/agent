@@ -1,4 +1,8 @@
-"""Project-directory validation and persistent file setup."""
+"""Validate a project and initialize its private persistent state.
+
+The agent writes its own bookkeeping below ``.deep-agent`` while all ordinary
+file and shell tools remain rooted at the user-selected project directory.
+"""
 
 from __future__ import annotations
 
@@ -49,6 +53,8 @@ def ensure_memory_file(project_root: Path) -> Path:
 
 
 def _validate_project_directory(project_root: Path) -> None:
+    """Reject missing paths and files before constructing agent backends."""
+
     if not project_root.exists():
         raise ValueError(f"Project path does not exist: {project_root}")
     if not project_root.is_dir():

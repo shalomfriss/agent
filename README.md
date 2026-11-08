@@ -65,7 +65,11 @@ in `coding_agent/` owns one concern:
 | `sessions.py` | Track active and saved SQLite conversation threads. |
 | `runtime.py` | Construct the model, tools, backend, and Deep Agent graph. |
 | `streaming.py` | Run prompts and render streamed model/tool events. |
+| `terminal.py` | Render stable terminal chrome, help, and runtime status. |
 | `application.py` | Coordinate startup, one-shot mode, and the interactive CLI. |
+
+See [docs/architecture.md](docs/architecture.md) for lifecycle diagrams,
+persistence details, model-switching behavior, and extension points.
 
 ## Persistent sessions
 

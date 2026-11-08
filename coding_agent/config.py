@@ -1,4 +1,9 @@
-"""Command-line configuration and defaults."""
+"""Parse CLI arguments into immutable, provider-aware agent settings.
+
+This module owns defaults and validation only. Filesystem initialization and
+runtime construction are deliberately handled by :mod:`coding_agent.workspace`
+and :mod:`coding_agent.runtime` respectively.
+"""
 
 from __future__ import annotations
 
@@ -63,7 +68,16 @@ class AgentConfig:
 
 
 def parse_cli_arguments(arguments: Sequence[str] | None = None) -> AgentConfig:
-    """Parse command-line arguments into a resolved, typed configuration."""
+    """Parse arguments and resolve paths and provider-specific defaults.
+
+    Args:
+        arguments: Explicit arguments for tests or embedding. ``None`` reads
+            from ``sys.argv`` through :mod:`argparse`.
+
+    Returns:
+        A validated configuration with an absolute project path and resolved
+        session database path.
+    """
 
     parser = _build_argument_parser()
     parsed = parser.parse_args(arguments)
@@ -102,11 +116,15 @@ def parse_cli_arguments(arguments: Sequence[str] | None = None) -> AgentConfig:
 
 
 def _resolve_session_database(value: str, project_root: Path) -> Path:
+    """Resolve a session database path relative to the selected project."""
+
     database = Path(value).expanduser()
     return database if database.is_absolute() else project_root / database
 
 
 def _build_argument_parser() -> argparse.ArgumentParser:
+    """Define the command-line interface without parsing process arguments."""
+
     parser = argparse.ArgumentParser(
         description="Run a coding agent with a local MLX, OpenAI, or Anthropic model."
     )

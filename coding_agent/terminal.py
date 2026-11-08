@@ -1,4 +1,9 @@
-"""Shared terminal presentation for the interactive coding agent."""
+"""Render stable terminal chrome independently from streamed turn output.
+
+This module owns the welcome panel, footer, status/help views, and mutable
+identity shown to the user. Turn-by-turn model output remains in
+:mod:`coding_agent.streaming`.
+"""
 
 from __future__ import annotations
 
@@ -19,7 +24,7 @@ MUTED = "#94a3b8"
 
 @dataclass
 class AgentIdentity:
-    """Information kept visible around the interactive prompt."""
+    """Mutable provider, model, project, and thread state shown in the UI."""
 
     project_root: Path
     provider: str
@@ -36,6 +41,8 @@ class TerminalDisplay:
         identity: AgentIdentity,
         console: Console | None = None,
     ) -> None:
+        """Bind visible identity state to a shared or newly created console."""
+
         self.identity = identity
         self.console = console or Console(highlight=False)
 
@@ -64,24 +71,34 @@ class TerminalDisplay:
 
     @property
     def short_session(self) -> str:
+        """Return a footer-friendly session label without changing its ID."""
+
         session_id = self.identity.session_id
         return session_id if len(session_id) <= 12 else f"{session_id[:12]}…"
 
     def set_session(self, session_id: str, resumed: bool) -> None:
+        """Update visible thread state and announce the selection."""
+
         self.identity.session_id = session_id
         self.identity.resumed = resumed
         action = "Resumed" if resumed else "Started"
         self.notice(f"{action} thread {self.short_session}")
 
     def set_model(self, provider: str, model: str) -> None:
+        """Update visible model state after a runtime switch succeeds."""
+
         self.identity.provider = provider
         self.identity.model = model
         self.notice(f"Using {provider} · {model}")
 
     def notice(self, message: str) -> None:
+        """Render a positive or informational one-line event."""
+
         self.console.print(f"[{ACTIVE}]◆[/] {escape(message)}")
 
     def warning(self, message: str) -> None:
+        """Render a non-fatal warning without raising an exception."""
+
         self.console.print(f"[yellow]◆[/] {escape(message)}")
 
     def status(self) -> None:
@@ -122,6 +139,8 @@ class TerminalDisplay:
         )
 
     def clear(self) -> None:
+        """Clear the terminal and redraw the current workspace header."""
+
         self.console.clear()
         self.welcome()
 

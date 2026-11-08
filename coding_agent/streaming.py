@@ -1,4 +1,9 @@
-"""Streaming execution and terminal presentation."""
+"""Translate LangGraph stream events into a compact terminal timeline.
+
+The runner deliberately depends on a small protocol rather than a concrete
+LangGraph type. ``StreamPrinter`` handles duplicate events, spinner lifecycle,
+tool summaries, output clipping, and final outcome timing.
+"""
 
 from __future__ import annotations
 
@@ -30,7 +35,10 @@ class StreamingAgent(Protocol):
         *,
         config: dict[str, Any],
         stream_mode: list[str],
-    ) -> Iterable[tuple[str, Any]]: ...
+    ) -> Iterable[tuple[str, Any]]:
+        """Yield typed message and graph-update events for one prompt."""
+
+        ...
 
 
 class AgentRunner:
@@ -41,6 +49,8 @@ class AgentRunner:
         agent: StreamingAgent,
         console: Console | None = None,
     ):
+        """Bind a compiled agent and optional shared Rich console."""
+
         self._agent = agent
         self._console = console
 
@@ -50,6 +60,12 @@ class AgentRunner:
         self._agent = agent
 
     def run(self, prompt: str, session_id: str) -> None:
+        """Stream one turn using ``session_id`` as the checkpoint thread.
+
+        Exceptions are reported and then re-raised so the interactive shell
+        can recover while one-shot callers still receive failure semantics.
+        """
+
         renderer = StreamPrinter(self._console)
         renderer.thinking("Thinking")
         outcome = "interrupted"
@@ -75,6 +91,8 @@ class AgentRunner:
         event_type: str,
         event: Any,
     ) -> None:
+        """Route one LangGraph stream event to the appropriate renderer API."""
+
         if event_type == "messages":
             message = event[0] if isinstance(event, tuple) else event
             if isinstance(message, BaseMessage):
@@ -84,6 +102,8 @@ class AgentRunner:
 
     @staticmethod
     def _report_failure(error: Exception) -> None:
+        """Print a concise error and an MLX hint for likely tool-call failures."""
+
         print("\nAgent execution failed.", file=sys.stderr)
         print(f"{type(error).__name__}: {error}", file=sys.stderr)
 
@@ -103,6 +123,8 @@ class StreamPrinter:
     """Render a compact agent timeline with visible activity states."""
 
     def __init__(self, console: Console | None = None) -> None:
+        """Initialize per-turn display state and duplicate-event tracking."""
+
         self._console = console or Console(highlight=False)
         self._assistant_line_open = False
         self._seen_tool_results: set[str] = set()
@@ -163,6 +185,8 @@ class StreamPrinter:
         self._console.print(f"[{color}]  {outcome} in {elapsed:.1f}s[/]")
 
     def _print_tool_result(self, message: ToolMessage) -> None:
+        """Render a tool result once, then resume the thinking indicator."""
+
         identifier = message.id or repr(message)
         if identifier in self._seen_tool_results:
             return
@@ -185,6 +209,8 @@ class StreamPrinter:
         self.thinking("Reviewing results")
 
     def _print_tool_calls(self, message: BaseMessage) -> None:
+        """Render newly observed tool calls and their compact argument summary."""
+
         for call in getattr(message, "tool_calls", None) or []:
             identifier = call.get("id") or repr(call)
             if identifier in self._seen_tool_calls:
@@ -201,11 +227,15 @@ class StreamPrinter:
             self.thinking(f"Running {name}")
 
     def _close_assistant_line(self) -> None:
+        """Terminate streamed assistant text before block-level output."""
+
         if self._assistant_line_open:
             self._console.print()
             self._assistant_line_open = False
 
     def _stop_status(self) -> None:
+        """Stop and release the active Rich spinner if one exists."""
+
         if self._status is not None:
             self._status.stop()
             self._status = None

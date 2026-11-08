@@ -1,4 +1,10 @@
-"""Model diagnostics and construction of the Deep Agents runtime."""
+"""Construct provider clients and the project-scoped Deep Agents graph.
+
+The runtime combines a chat model, unrestricted local project backend,
+built-in Deep Agents tools, durable memory files, and a LangGraph checkpointer.
+Provider discovery lives here so interactive model switching uses the same
+credentials and endpoints as initial startup.
+"""
 
 from __future__ import annotations
 
@@ -41,7 +47,12 @@ def create_model(
     model_name: str,
     temperature: float | None,
 ) -> BaseChatModel:
-    """Construct the selected provider's LangChain chat model."""
+    """Construct the selected provider's LangChain chat model.
+
+    MLX uses the OpenAI-compatible client without authentication. Cloud
+    providers require their standard environment variables and fail early with
+    a readable configuration error when credentials are absent.
+    """
 
     options: dict[str, Any] = {
         "model": model_name,
@@ -73,7 +84,16 @@ def list_available_models(
     provider: str,
     base_url: str | None,
 ) -> tuple[str, ...]:
-    """Return the model IDs exposed by the selected provider."""
+    """Return sorted, unique model IDs exposed by a provider's models API.
+
+    Args:
+        provider: One of ``mlx``, ``openai``, or ``anthropic``.
+        base_url: OpenAI-compatible endpoint for MLX or a custom OpenAI server.
+
+    Raises:
+        ValueError: If the provider is unknown, a required endpoint is absent,
+            or the corresponding cloud credential is unavailable.
+    """
 
     if provider == "mlx":
         if not base_url:
@@ -157,6 +177,8 @@ def multiply(a: int, b: int) -> int:
 
 
 def _test_basic_chat(model: BaseChatModel) -> bool:
+    """Verify that the configured endpoint can complete a minimal chat turn."""
+
     print("Testing basic chat...")
     try:
         response = model.invoke(
@@ -171,6 +193,8 @@ def _test_basic_chat(model: BaseChatModel) -> bool:
 
 
 def _test_structured_tool_calling(model: BaseChatModel) -> bool:
+    """Verify that the endpoint emits structured calls required by the agent."""
+
     print("\nTesting structured tool calling...")
     tool_model = model.bind_tools([multiply])
 

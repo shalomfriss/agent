@@ -1,4 +1,10 @@
-"""Application lifecycle and interactive terminal commands."""
+"""Wire configuration, persistence, runtime execution, and terminal workflows.
+
+``CodingAgentApplication`` owns process startup and dependency construction.
+``InteractiveShell`` owns the long-lived prompt loop and slash-command state.
+Keeping those responsibilities separate allows one-shot execution to reuse the
+same model, checkpoint, and streaming components without terminal workflows.
+"""
 
 from __future__ import annotations
 
@@ -104,6 +110,8 @@ class SlashCommandCompleter(Completer):
         document: Document,
         complete_event: CompleteEvent,
     ) -> Iterable[Completion]:
+        """Yield prefix matches only while the current input starts with `/`."""
+
         del complete_event
         prefix = document.text_before_cursor
         if not prefix.startswith("/") or " " in prefix:
@@ -127,11 +135,15 @@ def create_slash_command_key_bindings() -> KeyBindings:
 
     @bindings.add(Keys.Escape, eager=True)
     def clear_input(event: KeyPressEvent) -> None:
+        """Abort the current prompt immediately and discard its buffer."""
+
         event.current_buffer.reset()
         event.app.exit(exception=WorkflowCancelled())
 
     @bindings.add(Keys.ControlJ)
     def insert_newline(event: KeyPressEvent) -> None:
+        """Insert a literal newline without submitting the prompt."""
+
         event.current_buffer.insert_text("\n")
 
     return bindings
@@ -143,6 +155,8 @@ def create_choice_key_bindings(choices: tuple[str, ...]) -> KeyBindings:
     bindings = KeyBindings()
 
     def cycle(event: KeyPressEvent, offset: int) -> None:
+        """Replace the buffer with the adjacent choice, wrapping at either end."""
+
         if not choices:
             return
         current = event.current_buffer.text
@@ -155,14 +169,20 @@ def create_choice_key_bindings(choices: tuple[str, ...]) -> KeyBindings:
 
     @bindings.add(Keys.Down)
     def next_choice(event: KeyPressEvent) -> None:
+        """Select the next value in the active choice workflow."""
+
         cycle(event, 1)
 
     @bindings.add(Keys.Up)
     def previous_choice(event: KeyPressEvent) -> None:
+        """Select the previous value in the active choice workflow."""
+
         cycle(event, -1)
 
     @bindings.add(Keys.Escape, eager=True)
     def cancel_choice(event: KeyPressEvent) -> None:
+        """Unwind the complete nested workflow rather than clearing one field."""
+
         event.app.exit(exception=WorkflowCancelled())
 
     return bindings
@@ -195,9 +215,19 @@ class CodingAgentApplication:
     """Prepare dependencies and run either a one-shot or interactive agent."""
 
     def __init__(self, config: AgentConfig):
+        """Store the fully resolved settings used for one process invocation."""
+
         self._config = config
 
     def run(self) -> int:
+        """Build dependencies and execute one-shot or interactive mode.
+
+        The SQLite connection remains open for the full agent lifetime because
+        both session metadata and LangGraph checkpoints share it. Interactive
+        model changes replace the compiled agent but intentionally reuse that
+        connection and the active thread ID.
+        """
+
         try:
             workspace = Workspace.prepare(self._config)
         except (OSError, ValueError) as error:
@@ -247,6 +277,8 @@ class CodingAgentApplication:
             runner = AgentRunner(agent, console=display.console)
 
             def switch_model(provider: str, model_name: str) -> None:
+                """Rebuild the graph around a new model while retaining state."""
+
                 base_url = self._provider_base_url(provider)
                 temperature = self._provider_temperature(provider)
                 replacement_model = create_model(
@@ -263,6 +295,8 @@ class CodingAgentApplication:
                 runner.replace_agent(replacement_agent)
 
             def models_for_provider(provider: str) -> tuple[str, ...]:
+                """Discover models using the endpoint rules from initial setup."""
+
                 return list_available_models(
                     provider,
                     self._provider_base_url(provider),
@@ -293,6 +327,8 @@ class CodingAgentApplication:
         session_id: str,
         prompt: str,
     ) -> int:
+        """Run one prompt and always update the thread's recency metadata."""
+
         try:
             runner.run(prompt, session_id)
         finally:
@@ -300,18 +336,28 @@ class CodingAgentApplication:
         return EXIT_SUCCESS
 
     def _provider_base_url(self, provider: str) -> str | None:
+        """Select the original endpoint or the default endpoint for MLX."""
+
         if provider == self._config.provider:
             return self._config.base_url
         return DEFAULT_BASE_URL if provider == "mlx" else None
 
     def _provider_temperature(self, provider: str) -> float | None:
+        """Preserve configured sampling or apply the deterministic MLX default."""
+
         if provider == self._config.provider:
             return self._config.temperature
         return 0.0 if provider == "mlx" else None
 
 
 class InteractiveShell:
-    """Read prompts and implement the agent's slash commands."""
+    """Coordinate prompts, slash commands, cancellation, and active runtime.
+
+    Escape raises :class:`WorkflowCancelled` from prompt-toolkit workflows;
+    Ctrl-C follows the explicit exit-confirmation path. A switched model keeps
+    the same ``SessionManager`` thread, so checkpointed conversation state is
+    available to the replacement agent.
+    """
 
     EXIT_COMMANDS = {"/quit", "/exit", "quit", "exit"}
 
@@ -323,6 +369,8 @@ class InteractiveShell:
         model_switcher: ModelSwitcher,
         model_lister: ModelLister | None = None,
     ):
+        """Initialize shell collaborators and terminal-only prompt features."""
+
         self._runner = runner
         self._sessions = sessions
         self._display = display
@@ -342,6 +390,8 @@ class InteractiveShell:
             self._prompt_session.app.ttimeoutlen = ESCAPE_TIMEOUT_SECONDS
 
     def run(self) -> int:
+        """Read and dispatch input until EOF or an explicit exit request."""
+
         while True:
             prompt = self._read_prompt()
             if prompt is None:
@@ -378,6 +428,8 @@ class InteractiveShell:
                 self._sessions.touch(self._session_id)
 
     def _handle_command(self, prompt: str) -> bool:
+        """Dispatch a slash command and report whether input was consumed."""
+
         normalized = prompt.lower()
         if normalized == "/new":
             self._start_new_session()
@@ -406,14 +458,20 @@ class InteractiveShell:
         return False
 
     def _start_new_session(self) -> None:
+        """Create and select a fresh checkpoint thread."""
+
         self._session_id, _ = self._sessions.activate(force_new=True)
         self._display.set_session(self._session_id, resumed=False)
 
     def _switch_session(self, requested_id: str) -> None:
+        """Select an existing thread or create the requested ID on demand."""
+
         self._session_id, existed = self._sessions.activate(requested_id)
         self._display.set_session(self._session_id, resumed=existed)
 
     def _list_sessions(self) -> None:
+        """Render project sessions with the active thread visibly marked."""
+
         self._display.console.print("\n[bold #a78bfa]Saved threads[/]")
         for session_id, updated_at in self._sessions.list_sessions():
             marker = "◆" if session_id == self._session_id else "·"
@@ -464,6 +522,8 @@ class InteractiveShell:
             self._display.warning(str(error))
 
     def _switch_model(self, selection: str) -> None:
+        """Replace the agent runtime and update display state on success."""
+
         try:
             provider, model = parse_model_selection(
                 selection,
@@ -476,6 +536,8 @@ class InteractiveShell:
         self._display.set_model(provider, model)
 
     def _default_model(self, provider: str) -> str:
+        """Return a useful initial selection for the provider picker."""
+
         if provider == self._display.identity.provider:
             return self._display.identity.model
         if provider == "openai":
@@ -491,6 +553,8 @@ class InteractiveShell:
         default: str,
         choices: tuple[str, ...] = (),
     ) -> str:
+        """Read a free-form value with optional arrow-key choice cycling."""
+
         message = [("class:prompt", f"{label} ❯ ")]
         if self._prompt_session is not None:
             completer = None
@@ -506,6 +570,12 @@ class InteractiveShell:
         return value or default
 
     def _read_prompt(self) -> str | None:
+        """Read the next prompt, translating terminal controls into shell state.
+
+        Returns an empty string when Escape cancels input, and ``None`` when
+        the shell should exit.
+        """
+
         try:
             if self._prompt_session is not None:
                 return self._prompt_session.prompt(

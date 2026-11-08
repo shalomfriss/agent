@@ -1,4 +1,9 @@
-"""Persistent conversation-session bookkeeping."""
+"""Track project-scoped conversation threads alongside LangGraph checkpoints.
+
+``SessionManager`` stores only session metadata and the active-thread pointer.
+The actual messages and graph state are persisted by LangGraph's
+``SqliteSaver`` in the same database connection.
+"""
 
 from __future__ import annotations
 
@@ -12,6 +17,8 @@ class SessionManager:
     """Select and track checkpoint threads for one project directory."""
 
     def __init__(self, connection: sqlite3.Connection, project_root: Path):
+        """Bind session metadata to one project and initialize its tables."""
+
         self._connection = connection
         self._project_root = str(project_root)
         self._create_tables()
@@ -68,6 +75,8 @@ class SessionManager:
         self._connection.commit()
 
     def _create_tables(self) -> None:
+        """Create idempotent metadata tables owned by the application."""
+
         self._connection.executescript(
             """
             CREATE TABLE IF NOT EXISTS agent_sessions (
@@ -87,6 +96,8 @@ class SessionManager:
         self._connection.commit()
 
     def _active_session_id(self) -> str | None:
+        """Return the last selected thread for this project, if one exists."""
+
         row = self._connection.execute(
             """
             SELECT thread_id
@@ -98,6 +109,8 @@ class SessionManager:
         return None if row is None else str(row[0])
 
     def _session_exists(self, session_id: str) -> bool:
+        """Check whether this project has previously recorded a thread ID."""
+
         row = self._connection.execute(
             """
             SELECT 1
@@ -109,6 +122,8 @@ class SessionManager:
         return row is not None
 
     def _save_session(self, session_id: str) -> None:
+        """Insert a thread or update its last-used timestamp."""
+
         timestamp = self._now()
         self._connection.execute(
             """
@@ -122,6 +137,8 @@ class SessionManager:
         )
 
     def _set_active_session(self, session_id: str) -> None:
+        """Persist the single active-thread pointer for this project."""
+
         self._connection.execute(
             """
             INSERT INTO active_agent_sessions (project_root, thread_id)
@@ -134,6 +151,8 @@ class SessionManager:
 
     @staticmethod
     def _normalize_session_id(session_id: str | None) -> str | None:
+        """Trim an optional user-supplied ID and reject blank values."""
+
         if session_id is None:
             return None
         normalized = session_id.strip()
@@ -143,4 +162,6 @@ class SessionManager:
 
     @staticmethod
     def _now() -> str:
+        """Return a timezone-aware timestamp suitable for SQLite sorting."""
+
         return datetime.now(UTC).isoformat()
