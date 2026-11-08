@@ -31,6 +31,7 @@ class SlashCommandCompletionTests(unittest.TestCase):
                 "/new",
                 "/sessions",
                 "/switch ",
+                "/model ",
                 "/status",
                 "/clear",
                 "/help",

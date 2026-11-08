@@ -44,6 +44,11 @@ class AgentRunner:
         self._agent = agent
         self._console = console
 
+    def replace_agent(self, agent: StreamingAgent) -> None:
+        """Use a newly configured agent for subsequent turns."""
+
+        self._agent = agent
+
     def run(self, prompt: str, session_id: str) -> None:
         renderer = StreamPrinter(self._console)
         renderer.thinking("Thinking")

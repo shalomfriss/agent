@@ -6,12 +6,17 @@ import sqlite3
 import sys
 from contextlib import closing
 from dataclasses import dataclass
-from typing import Iterable
+from typing import Callable, Iterable
 
 from langgraph.checkpoint.sqlite import SqliteSaver
 from prompt_toolkit import PromptSession
 from prompt_toolkit.application.current import get_app
-from prompt_toolkit.completion import CompleteEvent, Completer, Completion
+from prompt_toolkit.completion import (
+    CompleteEvent,
+    Completer,
+    Completion,
+    WordCompleter,
+)
 from prompt_toolkit.document import Document
 from prompt_toolkit.filters import Condition
 from prompt_toolkit.key_binding import KeyBindings
@@ -21,7 +26,13 @@ from prompt_toolkit.shortcuts import CompleteStyle
 from prompt_toolkit.styles import Style
 from rich.markup import escape
 
-from coding_agent.config import AgentConfig, parse_cli_arguments
+from coding_agent.config import (
+    DEFAULT_BASE_URL,
+    DEFAULT_MODEL,
+    DEFAULT_OPENAI_MODEL,
+    AgentConfig,
+    parse_cli_arguments,
+)
 from coding_agent.runtime import (
     DiagnosticResult,
     create_coding_agent,
@@ -36,6 +47,8 @@ from coding_agent.workspace import Workspace
 
 EXIT_SUCCESS = 0
 EXIT_CONFIGURATION_ERROR = 1
+MODEL_PROVIDERS = ("openai", "anthropic", "mlx")
+ModelSwitcher = Callable[[str, str], None]
 
 
 @dataclass(frozen=True)
@@ -51,6 +64,7 @@ SLASH_COMMANDS = (
     SlashCommand("/new", "/new", "Start a new conversation"),
     SlashCommand("/sessions", "/sessions", "List saved conversations"),
     SlashCommand("/switch ", "/switch SESSION_ID", "Change conversations"),
+    SlashCommand("/model ", "/model [PROVIDER:]MODEL", "Choose a model"),
     SlashCommand("/status", "/status", "Show model and session details"),
     SlashCommand("/clear", "/clear", "Clear the terminal"),
     SlashCommand("/help", "/help", "Show commands and shortcuts"),
@@ -116,6 +130,29 @@ def create_slash_command_key_bindings() -> KeyBindings:
     return bindings
 
 
+def parse_model_selection(
+    selection: str,
+    current_provider: str,
+) -> tuple[str, str]:
+    """Resolve MODEL or PROVIDER:MODEL input into validated components."""
+
+    value = selection.strip()
+    if not value:
+        raise ValueError("Model ID cannot be empty.")
+
+    provider = current_provider
+    model = value
+    prefix, separator, remainder = value.partition(":")
+    if separator and prefix.lower() in MODEL_PROVIDERS:
+        provider = prefix.lower()
+        model = remainder.strip()
+    if provider not in MODEL_PROVIDERS:
+        raise ValueError(f"Unknown model provider: {provider}")
+    if not model:
+        raise ValueError("Model ID cannot be empty.")
+    return provider, model
+
+
 class CodingAgentApplication:
     """Prepare dependencies and run either a one-shot or interactive agent."""
 
@@ -170,6 +207,23 @@ class CodingAgentApplication:
                 )
             )
             runner = AgentRunner(agent, console=display.console)
+
+            def switch_model(provider: str, model_name: str) -> None:
+                base_url = self._provider_base_url(provider)
+                temperature = self._provider_temperature(provider)
+                replacement_model = create_model(
+                    provider=provider,
+                    base_url=base_url,
+                    model_name=model_name,
+                    temperature=temperature,
+                )
+                replacement_agent = create_coding_agent(
+                    model=replacement_model,
+                    project_root=workspace.project_root,
+                    checkpointer=SqliteSaver(connection),
+                )
+                runner.replace_agent(replacement_agent)
+
             display.welcome()
             if self._config.prompt is not None:
                 return self._run_once(
@@ -179,7 +233,12 @@ class CodingAgentApplication:
                     self._config.prompt,
                 )
 
-            shell = InteractiveShell(runner, sessions, display)
+            shell = InteractiveShell(
+                runner,
+                sessions,
+                display,
+                switch_model,
+            )
             return shell.run()
 
     def _run_once(
@@ -195,6 +254,16 @@ class CodingAgentApplication:
             sessions.touch(session_id)
         return EXIT_SUCCESS
 
+    def _provider_base_url(self, provider: str) -> str | None:
+        if provider == self._config.provider:
+            return self._config.base_url
+        return DEFAULT_BASE_URL if provider == "mlx" else None
+
+    def _provider_temperature(self, provider: str) -> float | None:
+        if provider == self._config.provider:
+            return self._config.temperature
+        return 0.0 if provider == "mlx" else None
+
 
 class InteractiveShell:
     """Read prompts and implement the agent's slash commands."""
@@ -206,10 +275,12 @@ class InteractiveShell:
         runner: AgentRunner,
         sessions: SessionManager,
         display: TerminalDisplay,
+        model_switcher: ModelSwitcher,
     ):
         self._runner = runner
         self._sessions = sessions
         self._display = display
+        self._model_switcher = model_switcher
         self._session_id = display.identity.session_id
         self._prompt_session: PromptSession[str] | None = None
         if sys.stdin.isatty() and sys.stdout.isatty():
@@ -253,6 +324,12 @@ class InteractiveShell:
         if normalized == "/sessions":
             self._list_sessions()
             return True
+        if normalized == "/model":
+            self._choose_model()
+            return True
+        if normalized.startswith("/model "):
+            self._switch_model(prompt.split(maxsplit=1)[1])
+            return True
         if normalized == "/status":
             self._display.status()
             return True
@@ -283,6 +360,69 @@ class InteractiveShell:
                 f"  {marker} {escape(session_id)}  "
                 f"[#64748b]{escape(updated_at)}[/]"
             )
+
+    def _choose_model(self) -> None:
+        """Prompt for provider and model while keeping the current thread."""
+
+        current_provider = self._display.identity.provider
+        try:
+            provider = self._read_choice(
+                "provider",
+                default=current_provider,
+                choices=MODEL_PROVIDERS,
+            ).lower()
+            if provider not in MODEL_PROVIDERS:
+                raise ValueError(f"Unknown model provider: {provider}")
+            model = self._read_choice(
+                "model",
+                default=self._default_model(provider),
+            )
+            self._switch_model(f"{provider}:{model}")
+        except (EOFError, KeyboardInterrupt):
+            self._display.warning("Model selection cancelled")
+        except ValueError as error:
+            self._display.warning(str(error))
+
+    def _switch_model(self, selection: str) -> None:
+        try:
+            provider, model = parse_model_selection(
+                selection,
+                self._display.identity.provider,
+            )
+            self._model_switcher(provider, model)
+        except Exception as error:
+            self._display.warning(str(error))
+            return
+        self._display.set_model(provider, model)
+
+    def _default_model(self, provider: str) -> str:
+        if provider == self._display.identity.provider:
+            return self._display.identity.model
+        if provider == "openai":
+            return DEFAULT_OPENAI_MODEL
+        if provider == "mlx":
+            return DEFAULT_MODEL
+        return ""
+
+    def _read_choice(
+        self,
+        label: str,
+        *,
+        default: str,
+        choices: tuple[str, ...] = (),
+    ) -> str:
+        message = [("class:prompt", f"{label} ❯ ")]
+        if self._prompt_session is not None:
+            completer = None
+            if choices:
+                completer = WordCompleter(choices, ignore_case=True)
+            return self._prompt_session.prompt(
+                message,
+                default=default,
+                completer=completer,
+            ).strip()
+        value = input(f"{label} [{default}] ❯ ").strip()
+        return value or default
 
     def _read_prompt(self) -> str | None:
         try:

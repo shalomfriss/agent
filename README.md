@@ -83,7 +83,17 @@ python deep_agent.py --new-session --skip-tests
 
 Inside the interactive CLI, use `/new` to start a fresh conversation,
 `/sessions` to list saved conversations, and `/switch SESSION_ID` to resume a
-specific one. Use `--session-db PATH` to store the SQLite database elsewhere.
+specific one. Typing `/` opens the command menu; `/status`, `/clear`, and
+`/help` expose runtime details and terminal controls. The footer keeps the
+active model and thread visible, while animated thinking and tool states show
+what the agent is doing. Press Alt+Enter for multiline prompts and Ctrl-C to
+clear the prompt or interrupt the current turn. Use `--session-db PATH` to
+store the SQLite database elsewhere.
+
+Use `/model` for the guided provider and model picker. Changing models rebuilds
+the agent runtime but keeps the current conversation thread. For a direct
+switch, use `/model MODEL_ID` with the current provider or
+`/model PROVIDER:MODEL_ID`, such as `/model mlx:models/local-model`.
 
 Durable cross-session context lives in `.deep-agent/AGENTS.md`. The agent may
 record stable project facts and explicit preferences there; ordinary dialogue

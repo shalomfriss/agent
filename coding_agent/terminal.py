@@ -73,6 +73,11 @@ class TerminalDisplay:
         action = "Resumed" if resumed else "Started"
         self.notice(f"{action} thread {self.short_session}")
 
+    def set_model(self, provider: str, model: str) -> None:
+        self.identity.provider = provider
+        self.identity.model = model
+        self.notice(f"Using {provider} · {model}")
+
     def notice(self, message: str) -> None:
         self.console.print(f"[{ACTIVE}]◆[/] {escape(message)}")
 
@@ -100,6 +105,7 @@ class TerminalDisplay:
             ("/new", "start a new conversation"),
             ("/sessions", "list saved conversations"),
             ("/switch ID", "change conversations"),
+            ("/model", "choose a model without losing the thread"),
             ("/status", "show workspace, model, and thread"),
             ("/clear", "clear the terminal"),
             ("/help", "show this help"),
