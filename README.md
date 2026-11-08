@@ -60,7 +60,8 @@ in `coding_agent/` owns one concern:
 
 | Module | Responsibility |
 | --- | --- |
-| `config.py` | Parse CLI options into typed configuration. |
+| `commands/` | Register commands; concrete commands live in `commands/slash_commands/`. |
+| `config/` | Load sectioned JSON defaults and parse CLI overrides. |
 | `workspace.py` | Validate project paths and initialize durable memory. |
 | `sessions.py` | Track active and saved SQLite conversation threads. |
 | `runtime.py` | Construct the model, tools, backend, and Deep Agent graph. |
@@ -70,6 +71,16 @@ in `coding_agent/` owns one concern:
 
 See [docs/architecture.md](docs/architecture.md) for lifecycle diagrams,
 persistence details, model-switching behavior, and extension points.
+
+## Configure defaults
+
+Edit `coding_agent/config/defaults.json` to change provider models and
+endpoints, model token/retry/timeout limits, shell command timeout, session
+database location, system prompt path, or terminal Escape timing. Values are
+grouped by concern and validated when the application imports its
+configuration. Relative prompt paths are resolved from the configuration
+file's directory. Command-line options still override the corresponding
+provider and session defaults for an individual run.
 
 ## Persistent sessions
 

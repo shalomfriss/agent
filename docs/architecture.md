@@ -8,7 +8,9 @@ terminal behavior and persistence independent from the selected provider.
 
 | Module | Responsibility |
 | --- | --- |
-| `config.py` | Parse CLI input and resolve provider-specific defaults. |
+| `commands/` | Register commands and host shared command infrastructure. |
+| `commands/slash_commands/` | Define one user-facing slash command per module. |
+| `config/` | Validate sectioned JSON defaults and parse CLI overrides. |
 | `workspace.py` | Validate the project and initialize `.deep-agent`. |
 | `runtime.py` | Build model clients, discover models, and compile the agent. |
 | `sessions.py` | Track saved threads and the active thread for each project. |
@@ -75,6 +77,17 @@ same SQLite connection and active thread ID, so the replacement agent resumes
 the existing conversation checkpoint. Display identity changes only after the
 replacement runtime is constructed successfully.
 
+## Configuration model
+
+Editable application defaults live in `coding_agent/config/defaults.json`.
+The `providers`, `runtime.model`, `runtime.backend`, `prompts`, `sessions`, and
+`terminal` sections keep unrelated settings separate. Prompt paths are resolved
+relative to the JSON file. `coding_agent.config` loads those values into
+immutable typed objects, and `AgentConfig` carries the same object through
+application startup. Runtime constructors receive their prompt path, model,
+and backend options explicitly, so operational values are not duplicated as
+Python constants.
+
 ## Terminal control flow
 
 - Escape raises `WorkflowCancelled` from the active prompt-toolkit workflow.
@@ -89,12 +102,14 @@ while ANSI arrow-key sequences continue to work in choice menus.
 
 ## Extension points
 
-- Add slash-command metadata to `SLASH_COMMANDS`, then dispatch it from
-  `InteractiveShell._handle_command`.
+- Add a `SlashCommand` subclass in its own `commands/slash_commands/` module,
+  then export and instantiate it in `coding_agent/commands/__init__.py`.
+  Completion and `/help` metadata are derived from that registry automatically.
 - Add explicit tools in `create_coding_agent`; Deep Agents' built-in file,
   shell, todo, and task tools are installed by the framework.
-- Extend provider support in `create_model`, `list_available_models`, and the
-  provider default helpers in `CodingAgentApplication`.
+- Extend provider support in `coding_agent/config/defaults.json`, `create_model`,
+  `list_available_models`, and the provider helpers in
+  `CodingAgentApplication`.
 - Add new stream event presentation in `AgentRunner._render_event` and keep
   rendering state isolated inside `StreamPrinter`.
 
