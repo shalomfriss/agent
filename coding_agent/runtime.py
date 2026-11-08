@@ -31,9 +31,6 @@ from coding_agent.workspace import MEMORY_PATH
 from tools.searxng_tool import search_web
 
 
-SYSTEM_PROMPT_PATH = Path(__file__).parent.parent / "system_prompt.txt"
-
-
 class DiagnosticResult(IntEnum):
     """Process exit codes produced by startup model diagnostics."""
 
@@ -130,6 +127,7 @@ def create_coding_agent(
     project_root: Path,
     checkpointer: SqliteSaver,
     backend_options: BackendOptions,
+    system_prompt_path: Path,
 ) -> Any:
     """Build an agent with project-rooted files, shell, memory, and tools.
 
@@ -144,7 +142,7 @@ def create_coding_agent(
         timeout=backend_options.command_timeout,
         inherit_env=True,
     )
-    system_prompt = SYSTEM_PROMPT_PATH.read_text(encoding="utf-8").strip()
+    system_prompt = system_prompt_path.read_text(encoding="utf-8").strip()
 
     return create_deep_agent(
         model=model,

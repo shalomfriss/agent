@@ -66,6 +66,7 @@ class ConfigurationTests(unittest.TestCase):
                 },
                 "backend": {"command_timeout": 90},
             },
+            "prompts": {"system_prompt_path": "prompts/custom.txt"},
             "sessions": {"database": ".state/custom.sqlite3"},
             "terminal": {"escape_timeout": 0.02},
         }
@@ -82,6 +83,10 @@ class ConfigurationTests(unittest.TestCase):
         self.assertEqual(config.defaults.runtime.model.max_retries, 4)
         self.assertEqual(config.defaults.runtime.model.timeout, 45)
         self.assertEqual(config.defaults.runtime.backend.command_timeout, 90)
+        self.assertEqual(
+            config.defaults.prompts.system_prompt_path,
+            (defaults_path.parent / "prompts/custom.txt").resolve(),
+        )
         self.assertEqual(config.defaults.terminal.escape_timeout, 0.02)
 
     def test_remaining_arguments_form_the_one_shot_prompt(self) -> None:

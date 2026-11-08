@@ -26,6 +26,9 @@
       "command_timeout": 300
     }
   },
+  "prompts": {
+    "system_prompt_path": "../../system_prompt.txt"
+  },
   "sessions": {
     "database": ".deep-agent/sessions.sqlite3"
   },

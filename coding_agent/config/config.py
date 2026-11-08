@@ -53,6 +53,13 @@ class RuntimeDefaults:
 
 
 @dataclass(frozen=True)
+class PromptDefaults:
+    """Resolved paths for prompts loaded by the agent runtime."""
+
+    system_prompt_path: Path
+
+
+@dataclass(frozen=True)
 class SessionDefaults:
     """Persistence defaults for conversation checkpoints."""
 
@@ -72,6 +79,7 @@ class ApplicationDefaults:
 
     providers: dict[str, ProviderDefaults]
     runtime: RuntimeDefaults
+    prompts: PromptDefaults
     sessions: SessionDefaults
     terminal: TerminalDefaults
 
@@ -93,6 +101,10 @@ def load_defaults(path: Path = DEFAULTS_PATH) -> ApplicationDefaults:
         }
         model_values = data["runtime"]["model"]
         backend_values = data["runtime"]["backend"]
+        system_prompt_path = _resolve_defaults_path(
+            data["prompts"]["system_prompt_path"],
+            defaults_path=path,
+        )
         defaults = ApplicationDefaults(
             providers=providers,
             runtime=RuntimeDefaults(
@@ -105,6 +117,7 @@ def load_defaults(path: Path = DEFAULTS_PATH) -> ApplicationDefaults:
                     command_timeout=float(backend_values["command_timeout"]),
                 ),
             ),
+            prompts=PromptDefaults(system_prompt_path=system_prompt_path),
             sessions=SessionDefaults(database=str(data["sessions"]["database"])),
             terminal=TerminalDefaults(
                 escape_timeout=float(data["terminal"]["escape_timeout"]),
@@ -129,6 +142,17 @@ def load_defaults(path: Path = DEFAULTS_PATH) -> ApplicationDefaults:
     if defaults.terminal.escape_timeout < 0:
         raise ValueError("Terminal escape_timeout cannot be negative")
     return defaults
+
+
+def _resolve_defaults_path(value: Any, defaults_path: Path) -> Path:
+    """Resolve a configured path relative to the JSON file that defines it."""
+
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("prompts.system_prompt_path must be a non-empty string")
+    configured_path = Path(value).expanduser()
+    if configured_path.is_absolute():
+        return configured_path
+    return (defaults_path.resolve().parent / configured_path).resolve()
 
 
 DEFAULTS = load_defaults()

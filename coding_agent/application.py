@@ -183,6 +183,9 @@ class CodingAgentApplication:
                 project_root=workspace.project_root,
                 checkpointer=SqliteSaver(connection),
                 backend_options=self._config.defaults.runtime.backend,
+                system_prompt_path=(
+                    self._config.defaults.prompts.system_prompt_path
+                ),
             )
             display = TerminalDisplay(
                 AgentIdentity(
@@ -212,6 +215,9 @@ class CodingAgentApplication:
                     project_root=workspace.project_root,
                     checkpointer=SqliteSaver(connection),
                     backend_options=self._config.defaults.runtime.backend,
+                    system_prompt_path=(
+                        self._config.defaults.prompts.system_prompt_path
+                    ),
                 )
                 runner.replace_agent(replacement_agent)
 

@@ -1,12 +1,46 @@
+import tempfile
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
-from coding_agent.config import DEFAULTS, ModelOptions
-from coding_agent.runtime import create_model, list_available_models
+from coding_agent.config import BackendOptions, DEFAULTS, ModelOptions
+from coding_agent.runtime import (
+    create_coding_agent,
+    create_model,
+    list_available_models,
+)
 
 
 class ModelProviderTests(unittest.TestCase):
+    @patch("coding_agent.runtime.create_deep_agent")
+    @patch("coding_agent.runtime.LocalShellBackend")
+    def test_agent_reads_the_configured_system_prompt(
+        self,
+        local_shell_backend,
+        create_deep_agent,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            prompt_path = Path(directory) / "custom-system-prompt.txt"
+            prompt_path.write_text("Custom system instructions.\n", encoding="utf-8")
+
+            create_coding_agent(
+                model=Mock(),
+                project_root=Path(directory),
+                checkpointer=Mock(),
+                backend_options=BackendOptions(command_timeout=12),
+                system_prompt_path=prompt_path,
+            )
+
+        self.assertEqual(
+            create_deep_agent.call_args.kwargs["system_prompt"],
+            "Custom system instructions.",
+        )
+        self.assertEqual(
+            local_shell_backend.call_args.kwargs["timeout"],
+            12,
+        )
+
     @patch("coding_agent.runtime.ChatOpenAI")
     def test_local_provider_uses_unauthenticated_endpoint(self, chat_openai) -> None:
         options = ModelOptions(max_tokens=1234, max_retries=4, timeout=45)
