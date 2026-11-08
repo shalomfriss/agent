@@ -5,8 +5,19 @@ from __future__ import annotations
 import sqlite3
 import sys
 from contextlib import closing
+from dataclasses import dataclass
+from typing import Iterable
 
 from langgraph.checkpoint.sqlite import SqliteSaver
+from prompt_toolkit import PromptSession
+from prompt_toolkit.application.current import get_app
+from prompt_toolkit.completion import CompleteEvent, Completer, Completion
+from prompt_toolkit.document import Document
+from prompt_toolkit.filters import Condition
+from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.key_binding.key_processor import KeyPressEvent
+from prompt_toolkit.keys import Keys
+from prompt_toolkit.shortcuts import CompleteStyle
 
 from coding_agent.config import AgentConfig, parse_cli_arguments
 from coding_agent.runtime import (
@@ -22,6 +33,63 @@ from coding_agent.workspace import Workspace
 
 EXIT_SUCCESS = 0
 EXIT_CONFIGURATION_ERROR = 1
+
+
+@dataclass(frozen=True)
+class SlashCommand:
+    """One interactive command and the text shown in its completion menu."""
+
+    completion: str
+    display: str
+    description: str
+
+
+SLASH_COMMANDS = (
+    SlashCommand("/new", "/new", "Start a new conversation"),
+    SlashCommand("/sessions", "/sessions", "List saved conversations"),
+    SlashCommand("/switch ", "/switch SESSION_ID", "Change conversations"),
+    SlashCommand("/quit", "/quit", "Exit the agent"),
+    SlashCommand("/exit", "/exit", "Exit the agent"),
+)
+
+
+class SlashCommandCompleter(Completer):
+    """Offer slash commands without completing ordinary prompt text."""
+
+    def get_completions(
+        self,
+        document: Document,
+        complete_event: CompleteEvent,
+    ) -> Iterable[Completion]:
+        del complete_event
+        prefix = document.text_before_cursor
+        if not prefix.startswith("/") or " " in prefix:
+            return
+
+        normalized = prefix.lower()
+        for command in SLASH_COMMANDS:
+            if command.completion.startswith(normalized):
+                yield Completion(
+                    command.completion,
+                    start_position=-len(prefix),
+                    display=command.display,
+                    display_meta=command.description,
+                )
+
+
+def create_slash_command_key_bindings() -> KeyBindings:
+    """Clear an in-progress slash command when Escape is pressed."""
+
+    bindings = KeyBindings()
+    slash_command_active = Condition(
+        lambda: get_app().current_buffer.text.startswith("/")
+    )
+
+    @bindings.add(Keys.Escape, filter=slash_command_active, eager=True)
+    def clear_slash_command(event: KeyPressEvent) -> None:
+        event.current_buffer.reset()
+
+    return bindings
 
 
 class CodingAgentApplication:
@@ -129,6 +197,14 @@ class InteractiveShell:
         self._runner = runner
         self._sessions = sessions
         self._session_id = session_id
+        self._prompt_session: PromptSession[str] | None = None
+        if sys.stdin.isatty() and sys.stdout.isatty():
+            self._prompt_session = PromptSession(
+                completer=SlashCommandCompleter(),
+                complete_while_typing=True,
+                complete_style=CompleteStyle.COLUMN,
+                key_bindings=create_slash_command_key_bindings(),
+            )
 
     def run(self) -> int:
         self._print_help()
@@ -180,9 +256,10 @@ class InteractiveShell:
             marker = "*" if session_id == self._session_id else " "
             print(f"{marker} {session_id}  {updated_at}")
 
-    @staticmethod
-    def _read_prompt() -> str | None:
+    def _read_prompt(self) -> str | None:
         try:
+            if self._prompt_session is not None:
+                return self._prompt_session.prompt("\nYou: ").strip()
             return input("\nYou: ").strip()
         except (EOFError, KeyboardInterrupt):
             print("\nGoodbye.")
@@ -191,10 +268,7 @@ class InteractiveShell:
     @staticmethod
     def _print_help() -> None:
         print("\nDeep Agent is ready.")
-        print("Type /quit to exit.")
-        print("Type /new to start a new conversation.")
-        print("Type /sessions to list saved conversations.")
-        print("Type /switch SESSION_ID to change conversations.")
+        print("Type / to see commands, or /quit to exit.")
         print("File tools and shell commands run from the project root.")
 
 
