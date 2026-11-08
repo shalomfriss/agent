@@ -4,12 +4,11 @@ from coding_agent.commands.base import CommandContext, CommandOutcome, SlashComm
 
 
 class ExitCommand(SlashCommand):
-    """Handle explicit slash-command exit aliases."""
+    """Exit the interactive shell from the explicit slash command."""
 
-    name = "/quit"
-    usage = "/quit"
+    name = "/exit"
+    usage = "/exit"
     description = "Exit the agent"
-    aliases = ("/exit",)
 
     def execute(
         self,

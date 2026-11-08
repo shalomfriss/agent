@@ -14,7 +14,7 @@ metadata and behavior, so completion, `/help`, and execution cannot drift apart.
 | `slash_commands/status.py` | `/status` prints runtime identity. |
 | `slash_commands/clear.py` | `/clear` redraws the terminal. |
 | `slash_commands/help.py` | `/help` renders registry-derived help. |
-| `slash_commands/exit.py` | `/quit` and `/exit` terminate the shell. |
+| `slash_commands/exit.py` | `/exit` terminates the shell. |
 
 `base.py` defines the command contract and shared execution context.
 `registry.py` resolves input and produces completion/help metadata.

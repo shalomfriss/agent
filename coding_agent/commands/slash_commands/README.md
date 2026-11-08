@@ -12,7 +12,7 @@ prompt. Each command lives in its own module and subclasses `SlashCommand`.
 | `status.py` | Displays the current project, provider, model, and session. |
 | `clear.py` | Clears and redraws the terminal interface. |
 | `help.py` | Renders help generated from registry metadata. |
-| `exit.py` | Implements `/quit` and `/exit`. |
+| `exit.py` | Implements `/exit`. |
 | `__init__.py` | Exports concrete command classes to the parent package. |
 
 When adding a command, create one module here, declare its completion/help

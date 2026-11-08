@@ -53,7 +53,7 @@ class CommandRegistryTests(unittest.TestCase):
             resumed=False,
         )
 
-    def test_exit_alias_uses_the_same_command(self) -> None:
+    def test_exit_command_terminates_the_shell(self) -> None:
         registry = create_default_registry()
         context = self.make_context()
 
@@ -61,6 +61,7 @@ class CommandRegistryTests(unittest.TestCase):
             registry.dispatch("/exit", context),
             CommandOutcome.EXIT,
         )
+        self.assertIsNone(registry.dispatch("/quit", context))
 
     def test_completion_and_help_are_generated_from_registry_metadata(self) -> None:
         registry = create_default_registry()
@@ -70,8 +71,9 @@ class CommandRegistryTests(unittest.TestCase):
 
         self.assertIn("/model ", completion_names)
         self.assertIn("/exit", completion_names)
+        self.assertNotIn("/quit", completion_names)
         self.assertIn("/model [PROVIDER:]MODEL", help_names)
-        self.assertIn("/quit", help_names)
+        self.assertIn("/exit", help_names)
 
     def test_help_command_uses_registry_rows(self) -> None:
         registry = create_default_registry()

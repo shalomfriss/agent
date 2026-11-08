@@ -41,7 +41,6 @@ class SlashCommandCompletionTests(unittest.TestCase):
                 "/status",
                 "/clear",
                 "/help",
-                "/quit",
                 "/exit",
             ],
         )
