@@ -18,6 +18,8 @@ from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.key_binding.key_processor import KeyPressEvent
 from prompt_toolkit.keys import Keys
 from prompt_toolkit.shortcuts import CompleteStyle
+from prompt_toolkit.styles import Style
+from rich.markup import escape
 
 from coding_agent.config import AgentConfig, parse_cli_arguments
 from coding_agent.runtime import (
@@ -28,6 +30,7 @@ from coding_agent.runtime import (
 )
 from coding_agent.sessions import SessionManager
 from coding_agent.streaming import AgentRunner
+from coding_agent.terminal import AgentIdentity, TerminalDisplay
 from coding_agent.workspace import Workspace
 
 
@@ -48,8 +51,25 @@ SLASH_COMMANDS = (
     SlashCommand("/new", "/new", "Start a new conversation"),
     SlashCommand("/sessions", "/sessions", "List saved conversations"),
     SlashCommand("/switch ", "/switch SESSION_ID", "Change conversations"),
+    SlashCommand("/status", "/status", "Show model and session details"),
+    SlashCommand("/clear", "/clear", "Clear the terminal"),
+    SlashCommand("/help", "/help", "Show commands and shortcuts"),
     SlashCommand("/quit", "/quit", "Exit the agent"),
     SlashCommand("/exit", "/exit", "Exit the agent"),
+)
+
+
+PROMPT_STYLE = Style.from_dict(
+    {
+        "prompt": "bold #a78bfa",
+        "toolbar.label": "bg:#111827 #94a3b8",
+        "toolbar.value": "bg:#111827 bold #e2e8f0",
+        "toolbar.dim": "bg:#111827 #64748b",
+        "completion-menu.completion": "bg:#111827 #e2e8f0",
+        "completion-menu.completion.current": "bg:#4c1d95 #ffffff bold",
+        "completion-menu.meta.completion": "bg:#111827 #94a3b8",
+        "completion-menu.meta.completion.current": "bg:#4c1d95 #ddd6fe",
+    }
 )
 
 
@@ -78,7 +98,7 @@ class SlashCommandCompleter(Completer):
 
 
 def create_slash_command_key_bindings() -> KeyBindings:
-    """Clear an in-progress slash command when Escape is pressed."""
+    """Add command cancellation and multiline editing shortcuts."""
 
     bindings = KeyBindings()
     slash_command_active = Condition(
@@ -88,6 +108,10 @@ def create_slash_command_key_bindings() -> KeyBindings:
     @bindings.add(Keys.Escape, filter=slash_command_active, eager=True)
     def clear_slash_command(event: KeyPressEvent) -> None:
         event.current_buffer.reset()
+
+    @bindings.add(Keys.Escape, Keys.Enter)
+    def insert_newline(event: KeyPressEvent) -> None:
+        event.current_buffer.insert_text("\n")
 
     return bindings
 
@@ -105,7 +129,6 @@ class CodingAgentApplication:
             print(error, file=sys.stderr)
             return EXIT_CONFIGURATION_ERROR
 
-        self._print_configuration(workspace)
         try:
             model = create_model(
                 provider=self._config.provider,
@@ -137,9 +160,17 @@ class CodingAgentApplication:
                 project_root=workspace.project_root,
                 checkpointer=SqliteSaver(connection),
             )
-            runner = AgentRunner(agent)
-
-            self._print_session(workspace, session_id, resumed)
+            display = TerminalDisplay(
+                AgentIdentity(
+                    project_root=workspace.project_root,
+                    provider=self._config.provider,
+                    model=self._config.model_name,
+                    session_id=session_id,
+                    resumed=resumed,
+                )
+            )
+            runner = AgentRunner(agent, console=display.console)
+            display.welcome()
             if self._config.prompt is not None:
                 return self._run_once(
                     runner,
@@ -148,7 +179,7 @@ class CodingAgentApplication:
                     self._config.prompt,
                 )
 
-            shell = InteractiveShell(runner, sessions, session_id)
+            shell = InteractiveShell(runner, sessions, display)
             return shell.run()
 
     def _run_once(
@@ -164,24 +195,6 @@ class CodingAgentApplication:
             sessions.touch(session_id)
         return EXIT_SUCCESS
 
-    def _print_configuration(self, workspace: Workspace) -> None:
-        print(f"Project root: {workspace.project_root}")
-        print(f"Provider: {self._config.provider}")
-        if self._config.base_url:
-            print(f"API endpoint: {self._config.base_url}")
-        print(f"Model: {self._config.model_name}")
-
-    @staticmethod
-    def _print_session(
-        workspace: Workspace,
-        session_id: str,
-        resumed: bool,
-    ) -> None:
-        action = "Resumed" if resumed else "Started"
-        print(f"{action} session: {session_id}")
-        print(f"Session database: {workspace.session_database}")
-        print(f"Project memory: {workspace.memory_file}")
-
 
 class InteractiveShell:
     """Read prompts and implement the agent's slash commands."""
@@ -192,11 +205,12 @@ class InteractiveShell:
         self,
         runner: AgentRunner,
         sessions: SessionManager,
-        session_id: str,
+        display: TerminalDisplay,
     ):
         self._runner = runner
         self._sessions = sessions
-        self._session_id = session_id
+        self._display = display
+        self._session_id = display.identity.session_id
         self._prompt_session: PromptSession[str] | None = None
         if sys.stdin.isatty() and sys.stdout.isatty():
             self._prompt_session = PromptSession(
@@ -204,10 +218,11 @@ class InteractiveShell:
                 complete_while_typing=True,
                 complete_style=CompleteStyle.COLUMN,
                 key_bindings=create_slash_command_key_bindings(),
+                bottom_toolbar=self._display.toolbar,
+                style=PROMPT_STYLE,
             )
 
     def run(self) -> int:
-        self._print_help()
         while True:
             prompt = self._read_prompt()
             if prompt is None:
@@ -215,13 +230,15 @@ class InteractiveShell:
             if not prompt:
                 continue
             if prompt.lower() in self.EXIT_COMMANDS:
-                print("Goodbye.")
+                self._display.notice("Goodbye.")
                 return EXIT_SUCCESS
             if self._handle_command(prompt):
                 continue
 
             try:
                 self._runner.run(prompt, self._session_id)
+            except KeyboardInterrupt:
+                self._display.warning("Turn interrupted")
             except Exception:
                 # A failed turn should not terminate the interactive shell.
                 pass
@@ -236,6 +253,15 @@ class InteractiveShell:
         if normalized == "/sessions":
             self._list_sessions()
             return True
+        if normalized == "/status":
+            self._display.status()
+            return True
+        if normalized == "/clear":
+            self._display.clear()
+            return True
+        if normalized == "/help":
+            self._display.help()
+            return True
         if normalized.startswith("/switch "):
             self._switch_session(prompt.split(maxsplit=1)[1])
             return True
@@ -243,33 +269,34 @@ class InteractiveShell:
 
     def _start_new_session(self) -> None:
         self._session_id, _ = self._sessions.activate(force_new=True)
-        print(f"Started session: {self._session_id}")
+        self._display.set_session(self._session_id, resumed=False)
 
     def _switch_session(self, requested_id: str) -> None:
         self._session_id, existed = self._sessions.activate(requested_id)
-        action = "Resumed" if existed else "Started"
-        print(f"{action} session: {self._session_id}")
+        self._display.set_session(self._session_id, resumed=existed)
 
     def _list_sessions(self) -> None:
-        print("Saved sessions:")
+        self._display.console.print("\n[bold #a78bfa]Saved threads[/]")
         for session_id, updated_at in self._sessions.list_sessions():
-            marker = "*" if session_id == self._session_id else " "
-            print(f"{marker} {session_id}  {updated_at}")
+            marker = "◆" if session_id == self._session_id else "·"
+            self._display.console.print(
+                f"  {marker} {escape(session_id)}  "
+                f"[#64748b]{escape(updated_at)}[/]"
+            )
 
     def _read_prompt(self) -> str | None:
         try:
             if self._prompt_session is not None:
-                return self._prompt_session.prompt("\nYou: ").strip()
-            return input("\nYou: ").strip()
-        except (EOFError, KeyboardInterrupt):
-            print("\nGoodbye.")
+                return self._prompt_session.prompt(
+                    [("class:prompt", "\n❯ ")]
+                ).strip()
+            return input("\n❯ ").strip()
+        except KeyboardInterrupt:
+            self._display.warning("Input cleared")
+            return ""
+        except EOFError:
+            self._display.notice("Goodbye.")
             return None
-
-    @staticmethod
-    def _print_help() -> None:
-        print("\nDeep Agent is ready.")
-        print("Type / to see commands, or /quit to exit.")
-        print("File tools and shell commands run from the project root.")
 
 
 def main() -> int:

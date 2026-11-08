@@ -27,7 +27,16 @@ class SlashCommandCompletionTests(unittest.TestCase):
 
         self.assertEqual(
             [completion.text for completion in completions],
-            ["/new", "/sessions", "/switch ", "/quit", "/exit"],
+            [
+                "/new",
+                "/sessions",
+                "/switch ",
+                "/status",
+                "/clear",
+                "/help",
+                "/quit",
+                "/exit",
+            ],
         )
         self.assertEqual(
             completions[0].display_meta_text,
@@ -57,6 +66,17 @@ class SlashCommandCompletionTests(unittest.TestCase):
             pipe_input.send_text("/switch unfinished\x1bregular prompt\n")
 
             self.assertEqual(session.prompt(), "regular prompt")
+
+    def test_alt_enter_inserts_a_newline(self) -> None:
+        with create_pipe_input() as pipe_input:
+            session = PromptSession(
+                input=pipe_input,
+                output=DummyOutput(),
+                key_bindings=create_slash_command_key_bindings(),
+            )
+            pipe_input.send_text("first line\x1b\rsecond line\r")
+
+            self.assertEqual(session.prompt(), "first line\nsecond line")
 
 
 if __name__ == "__main__":

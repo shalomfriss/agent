@@ -17,6 +17,7 @@ from langgraph.graph import START, StateGraph
 from langgraph.graph.message import add_messages
 
 from deep_agent import SessionManager, StreamPrinter, ensure_memory_file
+from coding_agent.streaming import AgentRunner
 
 
 class MessageState(TypedDict):
@@ -65,8 +66,22 @@ class SessionPersistenceTests(unittest.TestCase):
 
         rendered = output.getvalue()
         self.assertIn("hello", rendered)
-        self.assertEqual(rendered.count("Tool call: execute"), 1)
-        self.assertEqual(rendered.count("Tool result [execute]"), 1)
+        self.assertEqual(rendered.count("◇ Action execute"), 1)
+        self.assertEqual(rendered.count("execute finished"), 1)
+
+    def test_agent_runner_shows_thinking_and_completion_states(self) -> None:
+        class FakeAgent:
+            def stream(self, *_args, **_kwargs):
+                yield "messages", AIMessageChunk(content="done")
+
+        output = StringIO()
+        with redirect_stdout(output):
+            AgentRunner(FakeAgent()).run("work", "thread")
+
+        rendered = output.getvalue()
+        self.assertIn("Thinking…", rendered)
+        self.assertIn("◆ Response", rendered)
+        self.assertIn("completed in", rendered)
 
     def test_active_session_survives_database_reopen(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
