@@ -26,6 +26,7 @@ from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.sqlite import SqliteSaver
 from openai import OpenAI
 
+from coding_agent.config import BackendOptions, ModelOptions
 from coding_agent.workspace import MEMORY_PATH
 from tools.searxng_tool import search_web
 
@@ -46,6 +47,7 @@ def create_model(
     base_url: str | None,
     model_name: str,
     temperature: float | None,
+    model_options: ModelOptions,
 ) -> BaseChatModel:
     """Construct the selected provider's LangChain chat model.
 
@@ -54,29 +56,33 @@ def create_model(
     a readable configuration error when credentials are absent.
     """
 
-    options: dict[str, Any] = {
+    client_options: dict[str, Any] = {
         "model": model_name,
-        "max_tokens": 4096,
-        "max_retries": 1,
-        "timeout": 300,
+        "max_tokens": model_options.max_tokens,
+        "max_retries": model_options.max_retries,
+        "timeout": model_options.timeout,
     }
     if temperature is not None:
-        options["temperature"] = temperature
+        client_options["temperature"] = temperature
 
     if provider == "mlx":
-        return ChatOpenAI(base_url=base_url, api_key="not-required", **options)
+        return ChatOpenAI(
+            base_url=base_url,
+            api_key="not-required",
+            **client_options,
+        )
     if provider == "openai":
         if not os.environ.get("OPENAI_API_KEY"):
             raise ValueError("OPENAI_API_KEY is required with --provider openai")
         if base_url:
-            options["base_url"] = base_url
+            client_options["base_url"] = base_url
         else:
-            options["use_responses_api"] = True
-        return ChatOpenAI(**options)
+            client_options["use_responses_api"] = True
+        return ChatOpenAI(**client_options)
     if provider == "anthropic":
         if not os.environ.get("ANTHROPIC_API_KEY"):
             raise ValueError("ANTHROPIC_API_KEY is required with --provider anthropic")
-        return ChatAnthropic(**options)
+        return ChatAnthropic(**client_options)
     raise ValueError(f"Unknown model provider: {provider}")
 
 
@@ -123,6 +129,7 @@ def create_coding_agent(
     model: BaseChatModel,
     project_root: Path,
     checkpointer: SqliteSaver,
+    backend_options: BackendOptions,
 ) -> Any:
     """Build an agent with project-rooted files, shell, memory, and tools.
 
@@ -134,7 +141,7 @@ def create_coding_agent(
     backend = LocalShellBackend(
         root_dir=project_root,
         virtual_mode=True,
-        timeout=300,
+        timeout=backend_options.command_timeout,
         inherit_env=True,
     )
     system_prompt = SYSTEM_PROMPT_PATH.read_text(encoding="utf-8").strip()

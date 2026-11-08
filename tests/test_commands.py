@@ -7,6 +7,7 @@ from coding_agent.commands import (
     CommandOutcome,
     create_default_registry,
 )
+from coding_agent.config import DEFAULTS
 from coding_agent.terminal import AgentIdentity
 
 
@@ -26,6 +27,7 @@ class CommandRegistryTests(unittest.TestCase):
             session_id="active-thread",
             model_switcher=Mock(),
             model_lister=Mock(return_value=()),
+            defaults=DEFAULTS,
             read_choice=Mock(),
             confirm_exit=Mock(return_value=False),
         )

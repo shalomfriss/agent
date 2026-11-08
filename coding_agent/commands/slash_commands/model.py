@@ -9,7 +9,6 @@ from coding_agent.commands.base import (
     SlashCommand,
     WorkflowCancelled,
 )
-from coding_agent.config import DEFAULT_MODEL, DEFAULT_OPENAI_MODEL
 
 
 MODEL_PROVIDERS = ("openai", "anthropic", "mlx")
@@ -122,8 +121,5 @@ class ModelCommand(SlashCommand):
 
         if provider == context.display.identity.provider:
             return context.display.identity.model
-        if provider == "mlx":
-            return DEFAULT_MODEL
-        if provider == "openai":
-            return DEFAULT_OPENAI_MODEL
-        return ""
+        provider_defaults = context.defaults.providers[provider]
+        return provider_defaults.model or ""

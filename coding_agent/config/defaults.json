@@ -1,0 +1,35 @@
+{
+  "providers": {
+    "openai": {
+      "model": "gpt-6-luna",
+      "base_url": null,
+      "temperature": null
+    },
+    "anthropic": {
+      "model": null,
+      "base_url": null,
+      "temperature": null
+    },
+    "mlx": {
+      "model": "models/gemma-4-e2b-it-4bit",
+      "base_url": "http://127.0.0.1:8088/v1",
+      "temperature": 0.0
+    }
+  },
+  "runtime": {
+    "model": {
+      "max_tokens": 4096,
+      "max_retries": 1,
+      "timeout": 300
+    },
+    "backend": {
+      "command_timeout": 300
+    }
+  },
+  "sessions": {
+    "database": ".deep-agent/sessions.sqlite3"
+  },
+  "terminal": {
+    "escape_timeout": 0.01
+  }
+}

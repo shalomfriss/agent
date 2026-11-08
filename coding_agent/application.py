@@ -32,8 +32,9 @@ from coding_agent.commands import (
     create_default_registry,
 )
 from coding_agent.config import (
-    DEFAULT_BASE_URL,
+    DEFAULTS,
     AgentConfig,
+    ApplicationDefaults,
     parse_cli_arguments,
 )
 from coding_agent.runtime import (
@@ -51,7 +52,6 @@ from coding_agent.workspace import Workspace
 
 EXIT_SUCCESS = 0
 EXIT_CONFIGURATION_ERROR = 1
-ESCAPE_TIMEOUT_SECONDS = 0.01
 
 
 PROMPT_STYLE = Style.from_dict(
@@ -157,6 +157,7 @@ class CodingAgentApplication:
                 base_url=self._config.base_url,
                 model_name=self._config.model_name,
                 temperature=self._config.temperature,
+                model_options=self._config.defaults.runtime.model,
             )
         except ValueError as error:
             print(error, file=sys.stderr)
@@ -181,6 +182,7 @@ class CodingAgentApplication:
                 model=model,
                 project_root=workspace.project_root,
                 checkpointer=SqliteSaver(connection),
+                backend_options=self._config.defaults.runtime.backend,
             )
             display = TerminalDisplay(
                 AgentIdentity(
@@ -203,11 +205,13 @@ class CodingAgentApplication:
                     base_url=base_url,
                     model_name=model_name,
                     temperature=temperature,
+                    model_options=self._config.defaults.runtime.model,
                 )
                 replacement_agent = create_coding_agent(
                     model=replacement_model,
                     project_root=workspace.project_root,
                     checkpointer=SqliteSaver(connection),
+                    backend_options=self._config.defaults.runtime.backend,
                 )
                 runner.replace_agent(replacement_agent)
 
@@ -234,6 +238,7 @@ class CodingAgentApplication:
                 display,
                 switch_model,
                 models_for_provider,
+                self._config.defaults,
             )
             return shell.run()
 
@@ -257,14 +262,14 @@ class CodingAgentApplication:
 
         if provider == self._config.provider:
             return self._config.base_url
-        return DEFAULT_BASE_URL if provider == "mlx" else None
+        return self._config.defaults.providers[provider].base_url
 
     def _provider_temperature(self, provider: str) -> float | None:
         """Preserve configured sampling or apply the deterministic MLX default."""
 
         if provider == self._config.provider:
             return self._config.temperature
-        return 0.0 if provider == "mlx" else None
+        return self._config.defaults.providers[provider].temperature
 
 
 class InteractiveShell:
@@ -285,6 +290,7 @@ class InteractiveShell:
         display: TerminalDisplay,
         model_switcher: ModelSwitcher,
         model_lister: ModelLister | None = None,
+        defaults: ApplicationDefaults = DEFAULTS,
     ):
         """Initialize shell collaborators and terminal-only prompt features."""
 
@@ -302,13 +308,16 @@ class InteractiveShell:
                 bottom_toolbar=self._display.toolbar,
                 style=PROMPT_STYLE,
             )
-            self._prompt_session.app.ttimeoutlen = ESCAPE_TIMEOUT_SECONDS
+            self._prompt_session.app.ttimeoutlen = (
+                defaults.terminal.escape_timeout
+            )
         self._command_context = CommandContext(
             sessions=sessions,
             display=display,
             session_id=display.identity.session_id,
             model_switcher=model_switcher,
             model_lister=model_lister or (lambda _provider: ()),
+            defaults=defaults,
             read_choice=self._read_choice,
             confirm_exit=self._confirm_exit,
             help_rows=self._commands.help_rows(),

@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Protocol
 
+from coding_agent.config import ApplicationDefaults
 from coding_agent.sessions import SessionManager
 from coding_agent.terminal import TerminalDisplay
 
@@ -56,6 +57,7 @@ class CommandContext:
     session_id: str
     model_switcher: ModelSwitcher
     model_lister: ModelLister
+    defaults: ApplicationDefaults
     read_choice: ChoiceReader
     confirm_exit: ExitConfirmer
     help_rows: tuple[tuple[str, str], ...] = field(default_factory=tuple)
