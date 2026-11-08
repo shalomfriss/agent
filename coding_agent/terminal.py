@@ -115,23 +115,15 @@ class TerminalDisplay:
         )
         self.console.print(f"  thread     {session_id}")
 
-    def help(self) -> None:
-        """Print command and keyboard help without a large boxed overlay."""
+    def help(self, rows: tuple[tuple[str, str], ...]) -> None:
+        """Print registry-provided command help and keyboard shortcuts."""
 
-        rows = (
-            ("/new", "start a new conversation"),
-            ("/sessions", "list saved conversations"),
-            ("/switch ID", "change conversations"),
-            ("/model", "choose a model without losing the thread"),
-            ("/status", "show workspace, model, and thread"),
-            ("/clear", "clear the terminal"),
-            ("/help", "show this help"),
-            ("/quit", "exit"),
-        )
         self.console.print(f"\n[bold {ACCENT}]Commands[/]")
+        usage_width = max((len(command) for command, _ in rows), default=0)
         for command, description in rows:
             self.console.print(
-                f"  [bold {ACTIVE}]{command:<14}[/] [{MUTED}]{description}[/]"
+                f"  [bold {ACTIVE}]{command:<{usage_width}}[/] "
+                f"[{MUTED}]{description}[/]"
             )
         self.console.print(
             f"\n[{MUTED}]Esc cancels the current workflow · "

@@ -8,9 +8,9 @@ from rich.console import Console
 from coding_agent.application import (
     EXIT_SUCCESS,
     InteractiveShell,
-    WorkflowCancelled,
-    parse_model_selection,
 )
+from coding_agent.commands import WorkflowCancelled
+from coding_agent.commands.slash_commands.model import parse_model_selection
 from coding_agent.terminal import AgentIdentity, TerminalDisplay
 
 
@@ -81,7 +81,10 @@ class ModelSelectionTests(unittest.TestCase):
             ),
         )
 
-        shell._switch_model("mlx:local-model")
+        shell._commands.dispatch(
+            "/model mlx:local-model",
+            shell._command_context,
+        )
 
         self.assertEqual(replacements, [("mlx", "local-model")])
         self.assertEqual(display.identity.provider, "mlx")
@@ -99,28 +102,30 @@ class ModelSelectionTests(unittest.TestCase):
                 "claude-beta",
             ),
         )
-        shell._read_choice = Mock(
+        shell._command_context.read_choice = Mock(
             side_effect=["anthropic", "claude-beta"]
         )
 
-        shell._choose_model()
+        shell._commands.dispatch("/model", shell._command_context)
 
         self.assertEqual(replacements, [("anthropic", "claude-beta")])
         self.assertEqual(
-            shell._read_choice.call_args_list[0].kwargs["choices"],
+            shell._command_context.read_choice.call_args_list[0].kwargs["choices"],
             ("openai", "anthropic", "mlx"),
         )
         self.assertEqual(
-            shell._read_choice.call_args_list[1].kwargs["choices"],
+            shell._command_context.read_choice.call_args_list[1].kwargs["choices"],
             ("claude-alpha", "claude-beta"),
         )
 
     def test_escape_cancels_the_entire_model_workflow(self) -> None:
         switcher = Mock()
         shell, output = self.make_shell(model_switcher=switcher)
-        shell._read_choice = Mock(side_effect=WorkflowCancelled())
+        shell._command_context.read_choice = Mock(
+            side_effect=WorkflowCancelled()
+        )
 
-        shell._choose_model()
+        shell._commands.dispatch("/model", shell._command_context)
 
         switcher.assert_not_called()
         self.assertIn("Model selection cancelled", output.getvalue())

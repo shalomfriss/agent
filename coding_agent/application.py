@@ -11,29 +11,28 @@ from __future__ import annotations
 import sqlite3
 import sys
 from contextlib import closing
-from dataclasses import dataclass
-from typing import Callable, Iterable
 
 from langgraph.checkpoint.sqlite import SqliteSaver
 from prompt_toolkit import PromptSession
-from prompt_toolkit.completion import (
-    CompleteEvent,
-    Completer,
-    Completion,
-    WordCompleter,
-)
-from prompt_toolkit.document import Document
+from prompt_toolkit.completion import WordCompleter
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.key_binding.key_processor import KeyPressEvent
 from prompt_toolkit.keys import Keys
 from prompt_toolkit.shortcuts import CompleteStyle
 from prompt_toolkit.styles import Style
-from rich.markup import escape
 
+from coding_agent.commands import (
+    CommandContext,
+    CommandOutcome,
+    ExitRequested,
+    ModelLister,
+    ModelSwitcher,
+    SlashCommandCompleter,
+    WorkflowCancelled,
+    create_default_registry,
+)
 from coding_agent.config import (
     DEFAULT_BASE_URL,
-    DEFAULT_MODEL,
-    DEFAULT_OPENAI_MODEL,
     AgentConfig,
     parse_cli_arguments,
 )
@@ -52,40 +51,7 @@ from coding_agent.workspace import Workspace
 
 EXIT_SUCCESS = 0
 EXIT_CONFIGURATION_ERROR = 1
-MODEL_PROVIDERS = ("openai", "anthropic", "mlx")
-ModelSwitcher = Callable[[str, str], None]
-ModelLister = Callable[[str], tuple[str, ...]]
 ESCAPE_TIMEOUT_SECONDS = 0.01
-
-
-class WorkflowCancelled(Exception):
-    """Raised when Escape cancels the currently active prompt workflow."""
-
-
-class ExitRequested(Exception):
-    """Raised after the user confirms a Ctrl-C exit request."""
-
-
-@dataclass(frozen=True)
-class SlashCommand:
-    """One interactive command and the text shown in its completion menu."""
-
-    completion: str
-    display: str
-    description: str
-
-
-SLASH_COMMANDS = (
-    SlashCommand("/new", "/new", "Start a new conversation"),
-    SlashCommand("/sessions", "/sessions", "List saved conversations"),
-    SlashCommand("/switch ", "/switch SESSION_ID", "Change conversations"),
-    SlashCommand("/model ", "/model [PROVIDER:]MODEL", "Choose a model"),
-    SlashCommand("/status", "/status", "Show model and session details"),
-    SlashCommand("/clear", "/clear", "Clear the terminal"),
-    SlashCommand("/help", "/help", "Show commands and shortcuts"),
-    SlashCommand("/quit", "/quit", "Exit the agent"),
-    SlashCommand("/exit", "/exit", "Exit the agent"),
-)
 
 
 PROMPT_STYLE = Style.from_dict(
@@ -100,32 +66,6 @@ PROMPT_STYLE = Style.from_dict(
         "completion-menu.meta.completion.current": "bg:#4c1d95 #ddd6fe",
     }
 )
-
-
-class SlashCommandCompleter(Completer):
-    """Offer slash commands without completing ordinary prompt text."""
-
-    def get_completions(
-        self,
-        document: Document,
-        complete_event: CompleteEvent,
-    ) -> Iterable[Completion]:
-        """Yield prefix matches only while the current input starts with `/`."""
-
-        del complete_event
-        prefix = document.text_before_cursor
-        if not prefix.startswith("/") or " " in prefix:
-            return
-
-        normalized = prefix.lower()
-        for command in SLASH_COMMANDS:
-            if command.completion.startswith(normalized):
-                yield Completion(
-                    command.completion,
-                    start_position=-len(prefix),
-                    display=command.display,
-                    display_meta=command.description,
-                )
 
 
 def create_slash_command_key_bindings() -> KeyBindings:
@@ -186,29 +126,6 @@ def create_choice_key_bindings(choices: tuple[str, ...]) -> KeyBindings:
         event.app.exit(exception=WorkflowCancelled())
 
     return bindings
-
-
-def parse_model_selection(
-    selection: str,
-    current_provider: str,
-) -> tuple[str, str]:
-    """Resolve MODEL or PROVIDER:MODEL input into validated components."""
-
-    value = selection.strip()
-    if not value:
-        raise ValueError("Model ID cannot be empty.")
-
-    provider = current_provider
-    model = value
-    prefix, separator, remainder = value.partition(":")
-    if separator and prefix.lower() in MODEL_PROVIDERS:
-        provider = prefix.lower()
-        model = remainder.strip()
-    if provider not in MODEL_PROVIDERS:
-        raise ValueError(f"Unknown model provider: {provider}")
-    if not model:
-        raise ValueError("Model ID cannot be empty.")
-    return provider, model
 
 
 class CodingAgentApplication:
@@ -359,7 +276,7 @@ class InteractiveShell:
     available to the replacement agent.
     """
 
-    EXIT_COMMANDS = {"/quit", "/exit", "quit", "exit"}
+    TEXT_EXIT_COMMANDS = {"quit", "exit"}
 
     def __init__(
         self,
@@ -374,13 +291,11 @@ class InteractiveShell:
         self._runner = runner
         self._sessions = sessions
         self._display = display
-        self._model_switcher = model_switcher
-        self._model_lister = model_lister or (lambda _provider: ())
-        self._session_id = display.identity.session_id
+        self._commands = create_default_registry()
         self._prompt_session: PromptSession[str] | None = None
         if sys.stdin.isatty() and sys.stdout.isatty():
             self._prompt_session = PromptSession(
-                completer=SlashCommandCompleter(),
+                completer=SlashCommandCompleter(self._commands),
                 complete_while_typing=True,
                 complete_style=CompleteStyle.COLUMN,
                 key_bindings=create_slash_command_key_bindings(),
@@ -388,6 +303,16 @@ class InteractiveShell:
                 style=PROMPT_STYLE,
             )
             self._prompt_session.app.ttimeoutlen = ESCAPE_TIMEOUT_SECONDS
+        self._command_context = CommandContext(
+            sessions=sessions,
+            display=display,
+            session_id=display.identity.session_id,
+            model_switcher=model_switcher,
+            model_lister=model_lister or (lambda _provider: ()),
+            read_choice=self._read_choice,
+            confirm_exit=self._confirm_exit,
+            help_rows=self._commands.help_rows(),
+        )
 
     def run(self) -> int:
         """Read and dispatch input until EOF or an explicit exit request."""
@@ -398,11 +323,18 @@ class InteractiveShell:
                 return EXIT_SUCCESS
             if not prompt:
                 continue
-            if prompt.lower() in self.EXIT_COMMANDS:
+            if prompt.lower() in self.TEXT_EXIT_COMMANDS:
                 self._display.notice("Goodbye.")
                 return EXIT_SUCCESS
             try:
-                if self._handle_command(prompt):
+                outcome = self._commands.dispatch(
+                    prompt,
+                    self._command_context,
+                )
+                if outcome is CommandOutcome.EXIT:
+                    self._display.notice("Goodbye.")
+                    return EXIT_SUCCESS
+                if outcome is CommandOutcome.CONTINUE:
                     continue
             except KeyboardInterrupt:
                 if self._confirm_exit():
@@ -415,7 +347,7 @@ class InteractiveShell:
                 return EXIT_SUCCESS
 
             try:
-                self._runner.run(prompt, self._session_id)
+                self._runner.run(prompt, self._command_context.session_id)
             except KeyboardInterrupt:
                 if self._confirm_exit():
                     self._display.notice("Goodbye.")
@@ -425,126 +357,7 @@ class InteractiveShell:
                 # A failed turn should not terminate the interactive shell.
                 pass
             finally:
-                self._sessions.touch(self._session_id)
-
-    def _handle_command(self, prompt: str) -> bool:
-        """Dispatch a slash command and report whether input was consumed."""
-
-        normalized = prompt.lower()
-        if normalized == "/new":
-            self._start_new_session()
-            return True
-        if normalized == "/sessions":
-            self._list_sessions()
-            return True
-        if normalized == "/model":
-            self._choose_model()
-            return True
-        if normalized.startswith("/model "):
-            self._switch_model(prompt.split(maxsplit=1)[1])
-            return True
-        if normalized == "/status":
-            self._display.status()
-            return True
-        if normalized == "/clear":
-            self._display.clear()
-            return True
-        if normalized == "/help":
-            self._display.help()
-            return True
-        if normalized.startswith("/switch "):
-            self._switch_session(prompt.split(maxsplit=1)[1])
-            return True
-        return False
-
-    def _start_new_session(self) -> None:
-        """Create and select a fresh checkpoint thread."""
-
-        self._session_id, _ = self._sessions.activate(force_new=True)
-        self._display.set_session(self._session_id, resumed=False)
-
-    def _switch_session(self, requested_id: str) -> None:
-        """Select an existing thread or create the requested ID on demand."""
-
-        self._session_id, existed = self._sessions.activate(requested_id)
-        self._display.set_session(self._session_id, resumed=existed)
-
-    def _list_sessions(self) -> None:
-        """Render project sessions with the active thread visibly marked."""
-
-        self._display.console.print("\n[bold #a78bfa]Saved threads[/]")
-        for session_id, updated_at in self._sessions.list_sessions():
-            marker = "◆" if session_id == self._session_id else "·"
-            self._display.console.print(
-                f"  {marker} {escape(session_id)}  "
-                f"[#64748b]{escape(updated_at)}[/]"
-            )
-
-    def _choose_model(self) -> None:
-        """Prompt for provider and model while keeping the current thread."""
-
-        current_provider = self._display.identity.provider
-        try:
-            provider = self._read_choice(
-                "provider",
-                default=current_provider,
-                choices=MODEL_PROVIDERS,
-            ).lower()
-            if provider not in MODEL_PROVIDERS:
-                raise ValueError(f"Unknown model provider: {provider}")
-            default_model = self._default_model(provider)
-            available_models = self._model_lister(provider)
-            model_choices = tuple(
-                dict.fromkeys(
-                    model
-                    for model in (default_model, *available_models)
-                    if model
-                )
-            )
-            model = self._read_choice(
-                "model",
-                default=(
-                    default_model
-                    or (model_choices[0] if model_choices else "")
-                ),
-                choices=model_choices,
-            )
-            self._switch_model(f"{provider}:{model}")
-        except WorkflowCancelled:
-            self._display.warning("Model selection cancelled")
-        except KeyboardInterrupt:
-            if self._confirm_exit():
-                raise ExitRequested
-            self._display.warning("Exit cancelled")
-        except EOFError:
-            self._display.warning("Model selection cancelled")
-        except ValueError as error:
-            self._display.warning(str(error))
-
-    def _switch_model(self, selection: str) -> None:
-        """Replace the agent runtime and update display state on success."""
-
-        try:
-            provider, model = parse_model_selection(
-                selection,
-                self._display.identity.provider,
-            )
-            self._model_switcher(provider, model)
-        except Exception as error:
-            self._display.warning(str(error))
-            return
-        self._display.set_model(provider, model)
-
-    def _default_model(self, provider: str) -> str:
-        """Return a useful initial selection for the provider picker."""
-
-        if provider == self._display.identity.provider:
-            return self._display.identity.model
-        if provider == "openai":
-            return DEFAULT_OPENAI_MODEL
-        if provider == "mlx":
-            return DEFAULT_MODEL
-        return ""
+                self._sessions.touch(self._command_context.session_id)
 
     def _read_choice(
         self,

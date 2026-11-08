@@ -8,16 +8,19 @@ from prompt_toolkit.output import DummyOutput
 from prompt_toolkit.shortcuts import PromptSession
 
 from coding_agent.application import (
-    SlashCommandCompleter,
-    WorkflowCancelled,
     create_choice_key_bindings,
     create_slash_command_key_bindings,
+)
+from coding_agent.commands import (
+    SlashCommandCompleter,
+    WorkflowCancelled,
+    create_default_registry,
 )
 
 
 class SlashCommandCompletionTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.completer = SlashCommandCompleter()
+        self.completer = SlashCommandCompleter(create_default_registry())
         self.event = CompleteEvent(completion_requested=False)
 
     def completions_for(self, text: str):
