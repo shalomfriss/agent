@@ -9,6 +9,7 @@ from enum import IntEnum
 from pathlib import Path
 from typing import Any
 
+from anthropic import Anthropic
 from deepagents import create_deep_agent
 from deepagents.backends import LocalShellBackend
 from langchain_anthropic import ChatAnthropic
@@ -17,6 +18,7 @@ from langchain_core.messages import AIMessage
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.sqlite import SqliteSaver
+from openai import OpenAI
 
 from coding_agent.workspace import MEMORY_PATH
 from tools.searxng_tool import search_web
@@ -65,6 +67,36 @@ def create_model(
             raise ValueError("ANTHROPIC_API_KEY is required with --provider anthropic")
         return ChatAnthropic(**options)
     raise ValueError(f"Unknown model provider: {provider}")
+
+
+def list_available_models(
+    provider: str,
+    base_url: str | None,
+) -> tuple[str, ...]:
+    """Return the model IDs exposed by the selected provider."""
+
+    if provider == "mlx":
+        if not base_url:
+            raise ValueError("An MLX base URL is required to list models")
+        client = OpenAI(base_url=base_url, api_key="not-required")
+        models = client.models.list().data
+    elif provider == "openai":
+        api_key = os.environ.get("OPENAI_API_KEY")
+        if not api_key:
+            raise ValueError("OPENAI_API_KEY is required with --provider openai")
+        client = OpenAI(api_key=api_key, base_url=base_url)
+        models = client.models.list().data
+    elif provider == "anthropic":
+        api_key = os.environ.get("ANTHROPIC_API_KEY")
+        if not api_key:
+            raise ValueError(
+                "ANTHROPIC_API_KEY is required with --provider anthropic"
+            )
+        models = Anthropic(api_key=api_key).models.list(limit=1000).data
+    else:
+        raise ValueError(f"Unknown model provider: {provider}")
+
+    return tuple(sorted({model.id for model in models}, key=str.casefold))
 
 
 def create_coding_agent(

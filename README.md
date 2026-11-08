@@ -86,13 +86,16 @@ Inside the interactive CLI, use `/new` to start a fresh conversation,
 specific one. Typing `/` opens the command menu; `/status`, `/clear`, and
 `/help` expose runtime details and terminal controls. The footer keeps the
 active model and thread visible, while animated thinking and tool states show
-what the agent is doing. Press Alt+Enter for multiline prompts and Ctrl-C to
-clear the prompt or interrupt the current turn. Use `--session-db PATH` to
-store the SQLite database elsewhere.
+what the agent is doing. Press Escape to immediately clear the prompt or cancel
+the active workflow, and Ctrl+J for multiline prompts. Ctrl-C asks for
+confirmation before exiting, with Yes selected by default. Use
+`--session-db PATH` to store the SQLite database elsewhere.
 
-Use `/model` for the guided provider and model picker. Changing models rebuilds
-the agent runtime but keeps the current conversation thread. For a direct
-switch, use `/model MODEL_ID` with the current provider or
+Use `/model` for the guided provider and model picker. The up and down arrows
+cycle through every provider and every model reported by that provider. Escape
+cancels the picker at either step. Changing models rebuilds the agent runtime
+but keeps the current conversation thread. For a direct switch, use
+`/model MODEL_ID` with the current provider or
 `/model PROVIDER:MODEL_ID`, such as `/model mlx:models/local-model`.
 
 Durable cross-session context lives in `.deep-agent/AGENTS.md`. The agent may

@@ -10,7 +10,6 @@ from typing import Callable, Iterable
 
 from langgraph.checkpoint.sqlite import SqliteSaver
 from prompt_toolkit import PromptSession
-from prompt_toolkit.application.current import get_app
 from prompt_toolkit.completion import (
     CompleteEvent,
     Completer,
@@ -18,7 +17,6 @@ from prompt_toolkit.completion import (
     WordCompleter,
 )
 from prompt_toolkit.document import Document
-from prompt_toolkit.filters import Condition
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.key_binding.key_processor import KeyPressEvent
 from prompt_toolkit.keys import Keys
@@ -37,6 +35,7 @@ from coding_agent.runtime import (
     DiagnosticResult,
     create_coding_agent,
     create_model,
+    list_available_models,
     run_model_diagnostics,
 )
 from coding_agent.sessions import SessionManager
@@ -49,6 +48,16 @@ EXIT_SUCCESS = 0
 EXIT_CONFIGURATION_ERROR = 1
 MODEL_PROVIDERS = ("openai", "anthropic", "mlx")
 ModelSwitcher = Callable[[str, str], None]
+ModelLister = Callable[[str], tuple[str, ...]]
+ESCAPE_TIMEOUT_SECONDS = 0.01
+
+
+class WorkflowCancelled(Exception):
+    """Raised when Escape cancels the currently active prompt workflow."""
+
+
+class ExitRequested(Exception):
+    """Raised after the user confirms a Ctrl-C exit request."""
 
 
 @dataclass(frozen=True)
@@ -112,20 +121,49 @@ class SlashCommandCompleter(Completer):
 
 
 def create_slash_command_key_bindings() -> KeyBindings:
-    """Add command cancellation and multiline editing shortcuts."""
+    """Add immediate, universal input cancellation shortcuts."""
 
     bindings = KeyBindings()
-    slash_command_active = Condition(
-        lambda: get_app().current_buffer.text.startswith("/")
-    )
 
-    @bindings.add(Keys.Escape, filter=slash_command_active, eager=True)
-    def clear_slash_command(event: KeyPressEvent) -> None:
+    @bindings.add(Keys.Escape, eager=True)
+    def clear_input(event: KeyPressEvent) -> None:
         event.current_buffer.reset()
+        event.app.exit(exception=WorkflowCancelled())
 
-    @bindings.add(Keys.Escape, Keys.Enter)
+    @bindings.add(Keys.ControlJ)
     def insert_newline(event: KeyPressEvent) -> None:
         event.current_buffer.insert_text("\n")
+
+    return bindings
+
+
+def create_choice_key_bindings(choices: tuple[str, ...]) -> KeyBindings:
+    """Cycle through a choice list and let Escape cancel the workflow."""
+
+    bindings = KeyBindings()
+
+    def cycle(event: KeyPressEvent, offset: int) -> None:
+        if not choices:
+            return
+        current = event.current_buffer.text
+        try:
+            index = choices.index(current)
+        except ValueError:
+            index = -1 if offset > 0 else 0
+        event.current_buffer.text = choices[(index + offset) % len(choices)]
+        event.current_buffer.cursor_position = len(event.current_buffer.text)
+
+    @bindings.add(Keys.Down)
+    def next_choice(event: KeyPressEvent) -> None:
+        cycle(event, 1)
+
+    @bindings.add(Keys.Up)
+    def previous_choice(event: KeyPressEvent) -> None:
+        cycle(event, -1)
+
+    @bindings.add(Keys.Escape, eager=True)
+    def cancel_choice(event: KeyPressEvent) -> None:
+        event.app.exit(exception=WorkflowCancelled())
 
     return bindings
 
@@ -224,6 +262,12 @@ class CodingAgentApplication:
                 )
                 runner.replace_agent(replacement_agent)
 
+            def models_for_provider(provider: str) -> tuple[str, ...]:
+                return list_available_models(
+                    provider,
+                    self._provider_base_url(provider),
+                )
+
             display.welcome()
             if self._config.prompt is not None:
                 return self._run_once(
@@ -238,6 +282,7 @@ class CodingAgentApplication:
                 sessions,
                 display,
                 switch_model,
+                models_for_provider,
             )
             return shell.run()
 
@@ -276,11 +321,13 @@ class InteractiveShell:
         sessions: SessionManager,
         display: TerminalDisplay,
         model_switcher: ModelSwitcher,
+        model_lister: ModelLister | None = None,
     ):
         self._runner = runner
         self._sessions = sessions
         self._display = display
         self._model_switcher = model_switcher
+        self._model_lister = model_lister or (lambda _provider: ())
         self._session_id = display.identity.session_id
         self._prompt_session: PromptSession[str] | None = None
         if sys.stdin.isatty() and sys.stdout.isatty():
@@ -292,6 +339,7 @@ class InteractiveShell:
                 bottom_toolbar=self._display.toolbar,
                 style=PROMPT_STYLE,
             )
+            self._prompt_session.app.ttimeoutlen = ESCAPE_TIMEOUT_SECONDS
 
     def run(self) -> int:
         while True:
@@ -303,13 +351,26 @@ class InteractiveShell:
             if prompt.lower() in self.EXIT_COMMANDS:
                 self._display.notice("Goodbye.")
                 return EXIT_SUCCESS
-            if self._handle_command(prompt):
+            try:
+                if self._handle_command(prompt):
+                    continue
+            except KeyboardInterrupt:
+                if self._confirm_exit():
+                    self._display.notice("Goodbye.")
+                    return EXIT_SUCCESS
+                self._display.warning("Exit cancelled")
                 continue
+            except ExitRequested:
+                self._display.notice("Goodbye.")
+                return EXIT_SUCCESS
 
             try:
                 self._runner.run(prompt, self._session_id)
             except KeyboardInterrupt:
-                self._display.warning("Turn interrupted")
+                if self._confirm_exit():
+                    self._display.notice("Goodbye.")
+                    return EXIT_SUCCESS
+                self._display.warning("Exit cancelled")
             except Exception:
                 # A failed turn should not terminate the interactive shell.
                 pass
@@ -373,12 +434,31 @@ class InteractiveShell:
             ).lower()
             if provider not in MODEL_PROVIDERS:
                 raise ValueError(f"Unknown model provider: {provider}")
+            default_model = self._default_model(provider)
+            available_models = self._model_lister(provider)
+            model_choices = tuple(
+                dict.fromkeys(
+                    model
+                    for model in (default_model, *available_models)
+                    if model
+                )
+            )
             model = self._read_choice(
                 "model",
-                default=self._default_model(provider),
+                default=(
+                    default_model
+                    or (model_choices[0] if model_choices else "")
+                ),
+                choices=model_choices,
             )
             self._switch_model(f"{provider}:{model}")
-        except (EOFError, KeyboardInterrupt):
+        except WorkflowCancelled:
+            self._display.warning("Model selection cancelled")
+        except KeyboardInterrupt:
+            if self._confirm_exit():
+                raise ExitRequested
+            self._display.warning("Exit cancelled")
+        except EOFError:
             self._display.warning("Model selection cancelled")
         except ValueError as error:
             self._display.warning(str(error))
@@ -420,6 +500,7 @@ class InteractiveShell:
                 message,
                 default=default,
                 completer=completer,
+                key_bindings=create_choice_key_bindings(choices),
             ).strip()
         value = input(f"{label} [{default}] ❯ ").strip()
         return value or default
@@ -431,12 +512,32 @@ class InteractiveShell:
                     [("class:prompt", "\n❯ ")]
                 ).strip()
             return input("\n❯ ").strip()
+        except WorkflowCancelled:
+            return ""
         except KeyboardInterrupt:
-            self._display.warning("Input cleared")
+            if self._confirm_exit():
+                self._display.notice("Goodbye.")
+                return None
+            self._display.warning("Exit cancelled")
             return ""
         except EOFError:
             self._display.notice("Goodbye.")
             return None
+
+    def _confirm_exit(self) -> bool:
+        """Ask for confirmation, with Yes selected by default."""
+
+        try:
+            answer = self._read_choice(
+                "Exit program?",
+                default="yes",
+                choices=("yes", "no"),
+            )
+        except WorkflowCancelled:
+            return False
+        except (EOFError, KeyboardInterrupt):
+            return True
+        return answer.strip().lower() in {"", "y", "yes"}
 
 
 def main() -> int:

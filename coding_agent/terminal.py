@@ -117,8 +117,8 @@ class TerminalDisplay:
                 f"  [bold {ACTIVE}]{command:<14}[/] [{MUTED}]{description}[/]"
             )
         self.console.print(
-            f"\n[{MUTED}]Esc clears a slash command · Alt+Enter adds a line · "
-            "Ctrl-C clears input or interrupts a turn[/]"
+            f"\n[{MUTED}]Esc cancels the current workflow · "
+            "Ctrl+J adds a line · Ctrl-C opens exit confirmation[/]"
         )
 
     def clear(self) -> None:

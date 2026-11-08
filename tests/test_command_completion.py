@@ -1,4 +1,5 @@
 import unittest
+from threading import Timer
 
 from prompt_toolkit.completion import CompleteEvent
 from prompt_toolkit.document import Document
@@ -8,6 +9,8 @@ from prompt_toolkit.shortcuts import PromptSession
 
 from coding_agent.application import (
     SlashCommandCompleter,
+    WorkflowCancelled,
+    create_choice_key_bindings,
     create_slash_command_key_bindings,
 )
 
@@ -55,7 +58,7 @@ class SlashCommandCompletionTests(unittest.TestCase):
         self.assertEqual(self.completions_for("fix the tests"), [])
         self.assertEqual(self.completions_for("/switch feature"), [])
 
-    def test_escape_clears_the_entire_slash_command(self) -> None:
+    def test_escape_clears_the_entire_input(self) -> None:
         with create_pipe_input() as pipe_input:
             session = PromptSession(
                 input=pipe_input,
@@ -64,20 +67,57 @@ class SlashCommandCompletionTests(unittest.TestCase):
                 complete_while_typing=True,
                 key_bindings=create_slash_command_key_bindings(),
             )
-            pipe_input.send_text("/switch unfinished\x1bregular prompt\n")
+            session.app.ttimeoutlen = 0.01
+            pipe_input.send_text("unfinished prompt\x1b")
+            timer = Timer(
+                0.05,
+                lambda: pipe_input.send_text("regular prompt\r"),
+            )
+            timer.start()
 
-            self.assertEqual(session.prompt(), "regular prompt")
+            try:
+                with self.assertRaises(WorkflowCancelled):
+                    session.prompt()
+                self.assertEqual(session.prompt(), "regular prompt")
+            finally:
+                timer.join()
 
-    def test_alt_enter_inserts_a_newline(self) -> None:
+    def test_control_j_inserts_a_newline(self) -> None:
         with create_pipe_input() as pipe_input:
             session = PromptSession(
                 input=pipe_input,
                 output=DummyOutput(),
                 key_bindings=create_slash_command_key_bindings(),
             )
-            pipe_input.send_text("first line\x1b\rsecond line\r")
+            pipe_input.send_text("first line\nsecond line\r")
 
             self.assertEqual(session.prompt(), "first line\nsecond line")
+
+    def test_arrow_keys_cycle_through_choices(self) -> None:
+        with create_pipe_input() as pipe_input:
+            session = PromptSession(
+                input=pipe_input,
+                output=DummyOutput(),
+                key_bindings=create_choice_key_bindings(
+                    ("openai", "anthropic", "mlx")
+                ),
+            )
+            pipe_input.send_text("\x1b[B\r")
+
+            self.assertEqual(session.prompt(default="openai"), "anthropic")
+
+    def test_escape_cancels_a_choice_workflow(self) -> None:
+        with create_pipe_input() as pipe_input:
+            session = PromptSession(
+                input=pipe_input,
+                output=DummyOutput(),
+                key_bindings=create_choice_key_bindings(("yes", "no")),
+            )
+            session.app.ttimeoutlen = 0.01
+            pipe_input.send_text("\x1b")
+
+            with self.assertRaises(WorkflowCancelled):
+                session.prompt(default="yes")
 
 
 if __name__ == "__main__":

@@ -1,7 +1,8 @@
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
-from coding_agent.runtime import create_model
+from coding_agent.runtime import create_model, list_available_models
 
 
 class ModelProviderTests(unittest.TestCase):
@@ -49,6 +50,38 @@ class ModelProviderTests(unittest.TestCase):
         with patch.dict("os.environ", {"ANTHROPIC_API_KEY": ""}):
             with self.assertRaisesRegex(ValueError, "ANTHROPIC_API_KEY"):
                 create_model("anthropic", None, "anthropic-model", None)
+
+    @patch("coding_agent.runtime.OpenAI")
+    def test_openai_model_catalog_is_sorted_and_deduplicated(
+        self,
+        openai,
+    ) -> None:
+        openai.return_value.models.list.return_value.data = [
+            SimpleNamespace(id="z-model"),
+            SimpleNamespace(id="a-model"),
+            SimpleNamespace(id="z-model"),
+        ]
+
+        with patch.dict("os.environ", {"OPENAI_API_KEY": "test-key"}):
+            models = list_available_models("openai", None)
+
+        self.assertEqual(models, ("a-model", "z-model"))
+        openai.assert_called_once_with(api_key="test-key", base_url=None)
+
+    @patch("coding_agent.runtime.Anthropic")
+    def test_anthropic_model_catalog_requests_all_models(
+        self,
+        anthropic,
+    ) -> None:
+        anthropic.return_value.models.list.return_value.data = [
+            SimpleNamespace(id="claude-model")
+        ]
+
+        with patch.dict("os.environ", {"ANTHROPIC_API_KEY": "test-key"}):
+            models = list_available_models("anthropic", None)
+
+        self.assertEqual(models, ("claude-model",))
+        anthropic.return_value.models.list.assert_called_once_with(limit=1000)
 
 
 if __name__ == "__main__":
